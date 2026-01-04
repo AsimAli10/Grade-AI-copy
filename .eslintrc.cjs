@@ -1,0 +1,9 @@
+module.exports = {
+  root: true,
+  extends: ["next/core-web-vitals"],
+  ignorePatterns: ["node_modules", ".next", "dist"],
+  rules: {
+    "@next/next/no-img-element": "off",
+  },
+};
+

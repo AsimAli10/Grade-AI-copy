@@ -1,0 +1,167 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 217 89% 61%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 217 89% 55%;
+
+    --secondary: 270 50% 55%;
+    --secondary-foreground: 0 0% 100%;
+    --secondary-hover: 270 50% 50%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 217 89% 61%;
+
+    --radius: 0.75rem;
+
+    --gradient-hero: linear-gradient(135deg, hsl(217 89% 61%), hsl(270 50% 55%));
+    --gradient-card: linear-gradient(145deg, hsl(217 89% 61% / 0.05), hsl(270 50% 55% / 0.05));
+    
+    --shadow-soft: 0 2px 8px hsl(240 10% 3.9% / 0.06);
+    --shadow-medium: 0 4px 16px hsl(240 10% 3.9% / 0.1);
+    --shadow-strong: 0 8px 32px hsl(240 10% 3.9% / 0.15);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217 89% 61%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 217 89% 61%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 217 89% 67%;
+
+    --secondary: 270 50% 55%;
+    --secondary-foreground: 0 0% 100%;
+    --secondary-hover: 270 50% 60%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 217 89% 61%;
+
+    --gradient-hero: linear-gradient(135deg, hsl(217 89% 61%), hsl(270 50% 55%));
+    --gradient-card: linear-gradient(145deg, hsl(217 89% 61% / 0.1), hsl(270 50% 55% / 0.1));
+    
+    --shadow-soft: 0 2px 8px hsl(0 0% 0% / 0.3);
+    --shadow-medium: 0 4px 16px hsl(0 0% 0% / 0.4);
+    --shadow-strong: 0 8px 32px hsl(0 0% 0% / 0.5);
+
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 217 89% 61%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217 89% 61%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    min-height: 100vh;
+  }
+
+  .pdf-capturing [data-hide-in-pdf="true"] {
+    display: none !important;
+  }
+
+  .pdf-capturing [data-collapse-gap-in-pdf="true"] {
+    margin-top: 0 !important;
+  }
+
+  @media print {
+    .pdf-hide,
+    .print\:hidden {
+      display: none !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Smooth scroll snap similar to Apple.com */
+  .scroll-snap-proximity {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+  
+  /* Proximity snap on desktop only */
+  @media (min-width: 768px) {
+    .scroll-snap-proximity {
+      scroll-snap-type: y proximity;
+    }
+  }
+  
+  /* Better mobile touch scrolling - no snap on mobile */
+  @media (max-width: 767px) {
+    .scroll-snap-proximity {
+      scroll-snap-type: none;
+    }
+  }
+}
+
