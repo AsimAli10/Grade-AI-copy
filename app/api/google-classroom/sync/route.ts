@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import {
   getAuthenticatedClient,
@@ -46,6 +47,33 @@ export async function POST(request: NextRequest) {
         { error: "Google Classroom not connected. Please connect first." },
         { status: 400 }
       );
+    }
+
+    // Safety check: Verify this Google Classroom isn't connected to another user
+    // Use admin client to bypass RLS and check all integrations
+    const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+      const adminClient = createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: {
+          persistSession: false,
+        },
+      });
+
+      const { data: otherIntegration } = await adminClient
+        .from("google_classroom_integrations")
+        .select("user_id")
+        .eq("google_classroom_id", integration.google_classroom_id)
+        .neq("user_id", session.user.id)
+        .maybeSingle();
+
+      if (otherIntegration) {
+        return NextResponse.json(
+          { error: "This Google Classroom account is already connected. Please disconnect the existing connection first." },
+          { status: 403 }
+        );
+      }
     }
 
     // Check if token is expired and refresh if needed
@@ -95,6 +123,8 @@ export async function POST(request: NextRequest) {
 
     let syncedCount = 0;
     let errorCount = 0;
+    let skippedCount = 0;
+    let conflictDetected = false;
 
     // Sync each course
     for (const googleCourse of googleCourses) {
@@ -104,9 +134,17 @@ export async function POST(request: NextRequest) {
         // Check if course already exists
         const { data: existingCourse } = await (supabase
           .from("courses") as any)
-          .select("id")
+          .select("id, teacher_id")
           .eq("google_classroom_course_id", googleCourse.id)
           .maybeSingle();
+
+        // If course exists but belongs to a different teacher, skip it
+        if (existingCourse && (existingCourse as any).teacher_id !== session.user.id) {
+          console.warn(`Course ${googleCourse.id} already belongs to another teacher, skipping`);
+          skippedCount++;
+          conflictDetected = true;
+          continue;
+        }
 
         // Prepare course data
         const courseData = {
@@ -124,7 +162,7 @@ export async function POST(request: NextRequest) {
 
         let courseId: string;
         if (existingCourse) {
-          // Update existing course
+          // Update existing course (only if it belongs to current user)
           courseId = (existingCourse as any).id;
           await (supabase
             .from("courses") as any)
@@ -268,9 +306,39 @@ export async function POST(request: NextRequest) {
       })
       .eq("user_id", session.user.id);
 
+    // If we detected conflicts (courses belong to another teacher), return an error
+    if (conflictDetected) {
+      if (syncedCount === 0) {
+        // All courses belong to another user - this is a critical error
+        return NextResponse.json(
+          { 
+            error: "This Google Classroom account is already connected. The courses could not be synced. Please disconnect the existing connection first.",
+            synced: syncedCount,
+            skipped: skippedCount,
+            errors: errorCount,
+            total: googleCourses.length,
+          },
+          { status: 403 }
+        );
+      } else {
+        // Some courses synced, but some were skipped - return warning
+        return NextResponse.json(
+          { 
+            error: `Some courses could not be synced. ${syncedCount} course(s) synced, ${skippedCount} skipped.`,
+            synced: syncedCount,
+            skipped: skippedCount,
+            errors: errorCount,
+            total: googleCourses.length,
+          },
+          { status: 200 } // Still return 200 but with error message
+        );
+      }
+    }
+
     return NextResponse.json({
       success: true,
       synced: syncedCount,
+      skipped: skippedCount || 0,
       errors: errorCount,
       total: googleCourses.length,
     });

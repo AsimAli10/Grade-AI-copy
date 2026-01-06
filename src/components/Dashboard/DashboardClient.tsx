@@ -10,6 +10,7 @@ import {
   Inbox,
   RefreshCw,
   CheckCircle2,
+  X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
@@ -35,6 +36,7 @@ export function DashboardClient({
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
   const [googleConnected, setGoogleConnected] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -255,6 +257,41 @@ export function DashboardClient({
     }
   };
 
+  const handleDisconnectGoogle = async () => {
+    if (!confirm("Are you sure you want to disconnect Google Classroom? You'll need to reconnect to sync courses again.")) {
+      return;
+    }
+
+    setDisconnecting(true);
+    try {
+      const response = await fetch("/api/google-classroom/disconnect", {
+        method: "DELETE",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to disconnect Google Classroom");
+      }
+
+      toast({
+        title: "Disconnected",
+        description: "Google Classroom has been disconnected successfully",
+      });
+
+      setGoogleConnected(false);
+      router.refresh();
+    } catch (error: any) {
+      toast({
+        title: "Disconnect Failed",
+        description: error.message || "Failed to disconnect Google Classroom",
+        variant: "destructive",
+      });
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -281,12 +318,21 @@ export function DashboardClient({
               </div>
               <Button
                 onClick={handleSyncCourses}
-                disabled={syncing}
+                disabled={syncing || disconnecting}
                 variant="outline"
                 size="sm"
               >
                 <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
                 {syncing ? "Syncing..." : "Sync Courses"}
+              </Button>
+              <Button
+                onClick={handleDisconnectGoogle}
+                disabled={syncing || disconnecting}
+                variant="outline"
+                size="sm"
+              >
+                <X className={`h-4 w-4 mr-2 ${disconnecting ? "animate-spin" : ""}`} />
+                {disconnecting ? "Disconnecting..." : "Disconnect"}
               </Button>
             </div>
           ) : (

@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Lock, Eye, EyeOff, LogOut } from "lucide-react";
+import { Shield, Lock, Eye, EyeOff, LogOut, GraduationCap, CheckCircle2, X } from "lucide-react";
 
 export function SettingsClient() {
   const router = useRouter();
@@ -25,6 +25,8 @@ export function SettingsClient() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -42,6 +44,15 @@ export function SettingsClient() {
           router.push("/auth");
           return;
         }
+
+        // Check Google Classroom connection
+        const { data: integration } = await (supabase as any)
+          .from("google_classroom_integrations")
+          .select("sync_status")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        setGoogleConnected(!!integration);
       } catch (authError) {
         console.error("Error checking auth:", authError);
       } finally {
@@ -162,6 +173,41 @@ export function SettingsClient() {
       });
     } finally {
       setLoggingOut(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (!confirm("Are you sure you want to disconnect Google Classroom? You'll need to reconnect to sync courses again.")) {
+      return;
+    }
+
+    setDisconnecting(true);
+    try {
+      const response = await fetch("/api/google-classroom/disconnect", {
+        method: "DELETE",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to disconnect Google Classroom");
+      }
+
+      toast({
+        title: "Disconnected",
+        description: "Google Classroom has been disconnected successfully",
+      });
+
+      setGoogleConnected(false);
+      router.refresh();
+    } catch (error: any) {
+      toast({
+        title: "Disconnect Failed",
+        description: error.message || "Failed to disconnect Google Classroom",
+        variant: "destructive",
+      });
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -290,6 +336,44 @@ export function SettingsClient() {
             </Button>
           </CardContent>
         </Card>
+
+        {googleConnected && (
+          <Card className="mb-6">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <GraduationCap className="h-5 w-5" />
+                <CardTitle>Google Classroom</CardTitle>
+              </div>
+              <CardDescription>Manage your Google Classroom integration</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Google Classroom Connected</span>
+                </div>
+              </div>
+              <Button 
+                onClick={handleDisconnectGoogle} 
+                disabled={disconnecting} 
+                variant="outline"
+                className="w-full"
+              >
+                {disconnecting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2" />
+                    Disconnecting...
+                  </>
+                ) : (
+                  <>
+                    <X className="h-4 w-4 mr-2" />
+                    Disconnect Google Classroom
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="mb-6">
           <CardHeader>
