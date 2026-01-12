@@ -586,25 +586,103 @@ export async function POST(request: NextRequest) {
                     }
                   }
 
-                  // Extract submission content
-                  const content = googleSubmission.assignmentSubmission?.attachments
-                    ?.map((att: any) => {
-                      if (att.driveFile) return att.driveFile.title;
-                      if (att.form) return "Form submission";
-                      if (att.link) return att.link.url;
-                      if (att.youtubeVideo) return att.youtubeVideo.title;
-                      return null;
-                    })
-                    .filter(Boolean)
-                    .join(", ") || null;
-
-                  const fileUrls: string[] = googleSubmission.assignmentSubmission?.attachments
-                    ?.map((att: any) => {
-                      if (att.driveFile?.driveFile?.alternateLink) return att.driveFile.driveFile.alternateLink;
+                  // Extract file URLs and convert Google Drive links to direct view links
+                  // Log the submission structure for debugging
+                  const assignmentSubmission = googleSubmission.assignmentSubmission;
+                  
+                  // Check different possible paths for attachments
+                  const attachments = assignmentSubmission?.attachments || 
+                                    assignmentSubmission?.submission?.attachments ||
+                                    googleSubmission.attachments ||
+                                    [];
+                  
+                  const fileUrls: string[] = attachments
+                    .map((att: any) => {
+                      // Handle Google Drive files - check multiple possible structures
+                      let driveFile = att.driveFile?.driveFile || att.driveFile;
+                      let alternateLink = driveFile?.alternateLink || att.alternateLink;
+                      let fileId = driveFile?.id || att.id;
+                      let title = driveFile?.title || att.title || '';
+                      
+                      // If we have a file ID but no alternateLink, construct it
+                      if (fileId && !alternateLink) {
+                        alternateLink = `https://drive.google.com/file/d/${fileId}/view`;
+                      }
+                      
+                      // Extract file ID from Google Drive link if we have alternateLink
+                      if (alternateLink && !fileId) {
+                        const fileIdMatch = alternateLink.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                        if (fileIdMatch && fileIdMatch[1]) {
+                          fileId = fileIdMatch[1];
+                        }
+                      }
+                      
+                      // If we have a file ID, create preview link
+                      if (fileId) {
+                        const isPdf = title.toLowerCase().endsWith('.pdf') || 
+                                     alternateLink?.toLowerCase().includes('pdf');
+                        
+                        if (isPdf) {
+                          // PDF direct view link
+                          return `https://drive.google.com/file/d/${fileId}/preview`;
+                        } else {
+                          // Other files - use export view
+                          return `https://drive.google.com/uc?export=view&id=${fileId}`;
+                        }
+                      }
+                      
+                      // Fallback to alternateLink if we have it
+                      if (alternateLink) {
+                        return alternateLink;
+                      }
+                      
+                      // Handle direct links
                       if (att.link?.url) return att.link.url;
+                      // Handle YouTube videos
+                      if (att.youtubeVideo?.alternateLink) return att.youtubeVideo.alternateLink;
+                      
                       return null;
                     })
                     .filter(Boolean) || [];
+                  
+                  // Log for debugging
+                  if (fileUrls.length === 0) {
+                    if (attachments.length > 0) {
+                      console.error(`[SYNC] No file URLs extracted from ${attachments.length} attachments. Submission ID: ${googleSubmission.id}`);
+                      console.error(`[SYNC] First attachment structure:`, JSON.stringify(attachments[0], null, 2));
+                      console.error(`[SYNC] Full assignmentSubmission:`, JSON.stringify(assignmentSubmission, null, 2));
+                    } else {
+                      console.error(`[SYNC] No attachments found in submission. Submission ID: ${googleSubmission.id}`);
+                      console.error(`[SYNC] Submission keys:`, Object.keys(googleSubmission));
+                      if (googleSubmission.assignmentSubmission) {
+                        console.error(`[SYNC] assignmentSubmission keys:`, Object.keys(googleSubmission.assignmentSubmission));
+                      }
+                    }
+                  } else {
+                    console.log(`[SYNC] ✓ Extracted ${fileUrls.length} file URLs for submission ${googleSubmission.id}:`, fileUrls);
+                  }
+
+                  // Extract text content (only if there's actual text, not file names)
+                  // Don't set content to file names - that goes in file_urls
+                  let content: string | null = null;
+                  
+                  // Check if there's actual text content in the submission
+                  // Google Classroom submissions might have text in different places
+                  if (googleSubmission.assignmentSubmission?.attachments) {
+                    // Only extract text from form submissions or actual text attachments
+                    const textParts = googleSubmission.assignmentSubmission.attachments
+                      .map((att: any) => {
+                        // Form submissions might have text
+                        if (att.form) return "Form submission";
+                        // Don't include file names in content
+                        return null;
+                      })
+                      .filter(Boolean);
+                    
+                    if (textParts.length > 0) {
+                      content = textParts.join(", ");
+                    }
+                  }
 
                   // Determine submission status
                   let status = "draft";

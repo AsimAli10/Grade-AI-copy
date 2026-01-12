@@ -207,6 +207,7 @@ export async function fetchCoursework(
 
 /**
  * Fetch student submissions for an assignment
+ * Returns submissions with full attachment details
  */
 export async function fetchStudentSubmissions(
   oauth2Client: OAuth2Client,
@@ -215,6 +216,7 @@ export async function fetchStudentSubmissions(
 ) {
   const classroom = getClassroomClient(oauth2Client);
   
+  // First, try to get submissions with list() - it might include attachments
   const submissions: any[] = [];
   let pageToken: string | undefined;
 
@@ -224,6 +226,7 @@ export async function fetchStudentSubmissions(
       courseWorkId,
       pageSize: 100,
       pageToken,
+      // Don't restrict fields - get all data
     });
 
     if (response.data.studentSubmissions) {
@@ -233,7 +236,43 @@ export async function fetchStudentSubmissions(
     pageToken = response.data.nextPageToken || undefined;
   } while (pageToken);
 
-  return submissions;
+  // Check if we got attachment data from list()
+  const hasAttachments = submissions.some(
+    (s: any) => s.assignmentSubmission?.attachments && s.assignmentSubmission.attachments.length > 0
+  );
+
+  if (hasAttachments) {
+    // We got attachment data from list(), return it
+    return submissions;
+  }
+
+  // If list() didn't return attachments, fetch full details individually
+  // This is slower but necessary to get attachment data
+  const fullSubmissions: any[] = [];
+  for (const submission of submissions) {
+    try {
+      // Fetch full submission details without fields restriction
+      const response = await classroom.courses.courseWork.studentSubmissions.get({
+        courseId,
+        courseWorkId,
+        id: submission.id,
+        // Don't specify fields - get all data
+      });
+
+      if (response.data) {
+        fullSubmissions.push(response.data);
+      } else {
+        // Fallback to basic submission if get fails
+        fullSubmissions.push(submission);
+      }
+    } catch (error: any) {
+      console.error(`Error fetching full submission ${submission.id}:`, error?.message || error);
+      // Fallback to basic submission data
+      fullSubmissions.push(submission);
+    }
+  }
+
+  return fullSubmissions;
 }
 
 
