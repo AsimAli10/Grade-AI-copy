@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -23,39 +25,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileQuestion, Plus, Sparkles } from "lucide-react";
+import { FileQuestion, Plus, Sparkles, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 export default function QuizzesClient() {
-  // TODO: Fetch quizzes from API
-  // For now, using dummy data
-  const quizzes = [
-    {
-      id: "1",
-      title: "Java Fundamentals Quiz",
-      courseName: "AP Computer Science A",
-      questionsCount: 15,
-      published: true,
-      createdAt: "2024-02-10T10:00:00Z",
-    },
-    {
-      id: "2",
-      title: "HTML & CSS Basics",
-      courseName: "Introduction to Web Development",
-      questionsCount: 20,
-      published: true,
-      createdAt: "2024-02-12T14:30:00Z",
-    },
-    {
-      id: "3",
-      title: "Data Structures Review",
-      courseName: "Data Structures and Algorithms",
-      questionsCount: 25,
-      published: false,
-      createdAt: "2024-02-15T09:15:00Z",
-    },
-  ];
-
+  const router = useRouter();
+  const { toast } = useToast();
+  const [quizzes, setQuizzes] = useState<any[]>([]);
+  const [courses, setCourses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
@@ -65,29 +46,127 @@ export default function QuizzesClient() {
     questionCount: "",
     timeLimit: "",
     instructions: "",
+    useAI: false,
   });
 
-  const courses = [
-    { id: "1", name: "AP Computer Science A" },
-    { id: "2", name: "Introduction to Web Development" },
-    { id: "3", name: "Data Structures and Algorithms" },
-  ];
+  useEffect(() => {
+    fetchQuizzes();
+    fetchCourses();
+  }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const fetchQuizzes = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch("/api/quizzes");
+      const data = await response.json();
+      
+      if (response.ok) {
+        setQuizzes(data.quizzes || []);
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to load quizzes",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching quizzes:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load quizzes",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCourses = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      const { data: coursesData, error } = await supabase
+        .from("courses")
+        .select("id, name")
+        .eq("teacher_id", session.user.id)
+        .order("name");
+
+      if (error) throw error;
+      setCourses(coursesData || []);
+    } catch (error) {
+      console.error("Error fetching courses:", error);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: Submit to API
-    console.log("Generating quiz with:", formData);
-    setIsDialogOpen(false);
-    // Reset form
-    setFormData({
-      title: "",
-      course: "",
-      topic: "",
-      difficulty: "",
-      questionCount: "",
-      timeLimit: "",
-      instructions: "",
-    });
+    
+    if (!formData.title || !formData.course) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const response = await fetch("/api/quizzes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: formData.title,
+          course_id: formData.course,
+          description: formData.instructions,
+          topic: formData.topic,
+          difficulty: formData.difficulty,
+          questionCount: formData.questionCount,
+          timeLimit: formData.timeLimit,
+          instructions: formData.instructions,
+          useAI: formData.useAI,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        toast({
+          title: "Success",
+          description: data.message || "Quiz created successfully",
+        });
+        setIsDialogOpen(false);
+        setFormData({
+          title: "",
+          course: "",
+          topic: "",
+          difficulty: "",
+          questionCount: "",
+          timeLimit: "",
+          instructions: "",
+          useAI: false,
+        });
+        fetchQuizzes();
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to create quiz",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error creating quiz:", error);
+      toast({
+        title: "Error",
+        description: "Failed to create quiz",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -136,6 +215,11 @@ export default function QuizzesClient() {
                           {course.name}
                         </SelectItem>
                       ))}
+                      {courses.length === 0 && (
+                        <SelectItem value="no-courses" disabled>
+                          No courses available
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -208,14 +292,55 @@ export default function QuizzesClient() {
                     onChange={(e) => setFormData({ ...formData, instructions: e.target.value })}
                   />
                 </div>
+
+                <div className="flex items-center space-x-2 p-4 border rounded-lg bg-muted/50">
+                  <Checkbox
+                    id="useAI"
+                    checked={formData.useAI}
+                    onCheckedChange={(checked) =>
+                      setFormData({ ...formData, useAI: checked === true })
+                    }
+                  />
+                  <Label
+                    htmlFor="useAI"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-4 w-4" />
+                      <span>Use AI to generate quiz questions</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 font-normal">
+                      AI generation will be available soon. For now, this creates a placeholder quiz.
+                    </p>
+                  </Label>
+                </div>
               </div>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsDialogOpen(false)}
+                  disabled={submitting}
+                >
                   Cancel
                 </Button>
-                <Button type="submit">
-                  <Sparkles className="h-4 w-4 mr-2" />
-                  Generate Quiz with AI
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : formData.useAI ? (
+                    <>
+                      <Sparkles className="h-4 w-4 mr-2" />
+                      Create Quiz {formData.useAI && "with AI"}
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create Quiz
+                    </>
+                  )}
                 </Button>
               </DialogFooter>
             </form>
@@ -223,7 +348,11 @@ export default function QuizzesClient() {
         </Dialog>
       </div>
 
-      {quizzes.length === 0 ? (
+      {loading ? (
+        <div className="w-full px-6 py-8 flex items-center justify-center min-h-[400px]">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+        </div>
+      ) : quizzes.length === 0 ? (
         <Card className="shadow-sm border-border/50">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-6">

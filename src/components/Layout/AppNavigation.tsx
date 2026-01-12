@@ -14,6 +14,7 @@ import {
   Settings,
   GraduationCap,
 } from "lucide-react";
+import { usePendingSubmissionsCount } from "@/hooks/usePendingSubmissionsCount";
 
 const menuItems = [
   {
@@ -30,7 +31,7 @@ const menuItems = [
     title: "Submissions",
     icon: Inbox,
     url: "/submissions",
-    badge: "3",
+    showBadge: true, // Flag to indicate this item should show dynamic badge
   },
   {
     title: "Analytics",
@@ -56,6 +57,7 @@ const menuItems = [
 
 export function AppNavigation() {
   const pathname = usePathname();
+  const { count: pendingSubmissionsCount } = usePendingSubmissionsCount();
 
   return (
     <header className="border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 sticky top-0 z-50 shadow-sm">
@@ -72,6 +74,9 @@ export function AppNavigation() {
               {menuItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = pathname === item.url || pathname?.startsWith(item.url + "/");
+                // Show badge for submissions if there are pending submissions
+                const showBadge = item.showBadge && pendingSubmissionsCount !== null && pendingSubmissionsCount > 0;
+                const badgeValue = item.showBadge ? pendingSubmissionsCount : item.badge;
                 return (
                   <Link
                     key={item.url}
@@ -84,9 +89,9 @@ export function AppNavigation() {
                   >
                     <Icon className="h-4 w-4" />
                     <span>{item.title}</span>
-                    {item.badge && (
+                    {showBadge && badgeValue && (
                       <Badge variant="destructive" className="ml-1 text-[10px] px-1.5 py-0 h-4 leading-4 whitespace-nowrap">
-                        {item.badge}
+                        {badgeValue}
                       </Badge>
                     )}
                   </Link>

@@ -1,30 +1,69 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart3, TrendingUp, Users, FileText } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export function AnalyticsClient() {
-  // TODO: Implement GradeAI analytics
-  // For now, using dummy data
-  const analytics = {
-    totalAssignments: 12,
-    totalStudents: 64,
-    averageGrade: 85.3,
-    totalSubmissions: 156,
-    completionRate: 78.5,
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [analytics, setAnalytics] = useState({
+    totalAssignments: 0,
+    totalStudents: 0,
+    averageGrade: 0,
+    totalSubmissions: 0,
+    completionRate: 0,
+  });
+  const [topStudents, setTopStudents] = useState<any[]>([]);
+  const [coursePerformance, setCoursePerformance] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, []);
+
+  const fetchAnalytics = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch("/api/analytics");
+      const data = await response.json();
+
+      if (response.ok) {
+        setAnalytics({
+          totalAssignments: data.totalAssignments || 0,
+          totalStudents: data.totalStudents || 0,
+          averageGrade: data.averageGrade || 0,
+          totalSubmissions: data.totalSubmissions || 0,
+          completionRate: data.completionRate || 0,
+        });
+        setTopStudents(data.topStudents || []);
+        setCoursePerformance(data.coursePerformance || []);
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to load analytics",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching analytics:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load analytics",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const topStudents = [
-    { name: "Sarah Johnson", course: "AP Computer Science A", grade: 94.5, trend: "+2.3%" },
-    { name: "Michael Chen", course: "Introduction to Web Development", grade: 92.1, trend: "+1.8%" },
-    { name: "David Kim", course: "Data Structures and Algorithms", grade: 91.8, trend: "+0.5%" },
-  ];
-
-  const coursePerformance = [
-    { course: "AP Computer Science A", avgGrade: 87.5, students: 24, assignments: 4 },
-    { course: "Introduction to Web Development", avgGrade: 83.2, students: 18, assignments: 3 },
-    { course: "Data Structures and Algorithms", avgGrade: 85.1, students: 22, assignments: 5 },
-  ];
+  if (loading) {
+    return (
+      <div className="w-full px-6 py-8 flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full px-6 py-8">
@@ -87,7 +126,12 @@ export function AnalyticsClient() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {topStudents.map((student, index) => (
+              {topStudents.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No student data available yet
+                </p>
+              ) : (
+                topStudents.map((student, index) => (
                 <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
                   <div>
                     <p className="font-semibold">{student.name}</p>
@@ -98,7 +142,8 @@ export function AnalyticsClient() {
                     <p className="text-xs text-green-600">{student.trend}</p>
                   </div>
                 </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
@@ -110,7 +155,12 @@ export function AnalyticsClient() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {coursePerformance.map((course, index) => (
+              {coursePerformance.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No course data available yet
+                </p>
+              ) : (
+                coursePerformance.map((course, index) => (
                 <div key={index} className="p-3 border rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <p className="font-semibold">{course.course}</p>
@@ -122,7 +172,8 @@ export function AnalyticsClient() {
                     <span>{course.assignments} assignments</span>
                   </div>
                 </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>

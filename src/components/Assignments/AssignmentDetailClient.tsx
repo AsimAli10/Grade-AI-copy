@@ -79,11 +79,19 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
 
       if (submissionsError) {
         console.error("Error fetching submissions:", submissionsError);
+        console.error("Submission error details:", {
+          code: submissionsError.code,
+          message: submissionsError.message,
+          details: submissionsError.details,
+          hint: submissionsError.hint,
+        });
         toast({
           title: "Error",
-          description: "Failed to load submissions",
+          description: `Failed to load submissions: ${submissionsError.message}. This might be an RLS (Row Level Security) issue.`,
           variant: "destructive",
         });
+        setSubmissions([]);
+        setLoading(false);
         return;
       }
 
@@ -99,8 +107,17 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
 
       const [studentsResult, gradesResult] = await Promise.all([
         supabase.from("profiles").select("id, full_name, email").in("id", studentIds),
-        supabase.from("grades").select("id, submission_id, score, max_score, ai_confidence").in("submission_id", submissionIds),
+        supabase.from("grades").select("id, submission_id, overall_score, max_score, ai_confidence").in("submission_id", submissionIds),
       ]);
+
+      if (studentsResult.error) {
+        console.error("Error fetching student profiles:", studentsResult.error);
+        toast({
+          title: "Warning",
+          description: `Failed to load student profiles: ${studentsResult.error.message}. This is likely an RLS (Row Level Security) issue. Please run the migration: 20250101000004_fix_profile_rls_for_teachers.sql`,
+          variant: "destructive",
+        });
+      }
 
       const studentsMap = new Map((studentsResult.data || []).map((s: any) => [s.id, s]));
       const gradesMap = new Map((gradesResult.data || []).map((g: any) => [g.submission_id, g]));
@@ -116,7 +133,7 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
         return {
           id: sub.id,
           studentName: student.full_name || student.email || "Unknown Student",
-          grade: grade ? `${grade.score}/${grade.max_score || assignmentMaxPoints}` : null,
+          grade: grade ? `${grade.overall_score}/${grade.max_score || assignmentMaxPoints}` : null,
           confidence: grade?.ai_confidence || null,
           lastActivity: sub.submitted_at ? new Date(sub.submitted_at).toLocaleDateString() : "—",
           status: sub.status,

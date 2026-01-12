@@ -258,7 +258,7 @@ export function DashboardClient({
   };
 
   const handleDisconnectGoogle = async () => {
-    if (!confirm("Are you sure you want to disconnect Google Classroom? You'll need to reconnect to sync courses again.")) {
+    if (!confirm("Are you sure you want to disconnect Google Classroom? All synced courses, assignments, submissions, and student data will be permanently deleted. You'll need to reconnect and re-sync to import data again.")) {
       return;
     }
 
@@ -276,7 +276,7 @@ export function DashboardClient({
 
       toast({
         title: "Disconnected",
-        description: "Google Classroom has been disconnected successfully",
+        description: "Google Classroom has been disconnected. All synced data has been removed.",
       });
 
       setGoogleConnected(false);

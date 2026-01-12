@@ -41,11 +41,12 @@ export default function CoursesClient() {
 
       setGoogleConnected(!!integration);
 
-      // Fetch courses
+      // Fetch courses - only show active courses
       const { data: coursesData, error } = await supabase
         .from("courses")
         .select("*")
         .eq("teacher_id", session.user.id)
+        .eq("is_active", true)
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -84,8 +85,9 @@ export default function CoursesClient() {
 
       toast({
         title: "Sync Complete",
-        description: `Synced ${data.synced} course${data.synced !== 1 ? "s" : ""} from Google Classroom`,
+        description: `Synced ${data.synced} course${data.synced !== 1 ? "s" : ""}, ${data.studentsSynced || 0} students, ${data.assignmentsSynced || 0} assignments, ${data.submissionsSynced || 0} submissions`,
       });
+      
 
       // Refresh courses
       await fetchCourses();
@@ -101,7 +103,7 @@ export default function CoursesClient() {
   };
 
   const handleDisconnectGoogle = async () => {
-    if (!confirm("Are you sure you want to disconnect Google Classroom? You'll need to reconnect to sync courses again.")) {
+    if (!confirm("Are you sure you want to disconnect Google Classroom? All synced courses, assignments, submissions, and student data will be permanently deleted. You'll need to reconnect and re-sync to import data again.")) {
       return;
     }
 
@@ -194,7 +196,9 @@ export default function CoursesClient() {
             </div>
             <h3 className="text-xl font-semibold mb-2">No courses yet</h3>
             <p className="text-muted-foreground text-center mb-6 text-base">
-              {googleConnected ? "No courses found. Sync to import from Google Classroom." : "Connect your Google Classroom to sync courses"}
+              {googleConnected 
+                ? "No courses found. Sync to import from Google Classroom." 
+                : "Connect your Google Classroom to sync courses, or create courses manually."}
             </p>
             <Button
               onClick={googleConnected ? handleSyncCourses : handleConnectGoogle}

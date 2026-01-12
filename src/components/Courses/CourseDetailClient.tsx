@@ -48,6 +48,12 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
 
       if (courseError || !courseData) {
         console.error("Error fetching course:", courseError);
+        console.error("Course error details:", {
+          code: courseError?.code,
+          message: courseError?.message,
+          details: courseError?.details,
+          hint: courseError?.hint,
+        });
         toast({
           title: "Error",
           description: "Failed to load course",
@@ -55,6 +61,13 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
         });
         return;
       }
+
+      console.log("Course data loaded:", {
+        id: courseData.id,
+        name: courseData.name,
+        teacher_id: courseData.teacher_id,
+        student_count: courseData.student_count,
+      });
 
       setCourse(courseData);
 
@@ -116,26 +129,55 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
       }
 
       // Fetch enrolled students
-      const { data: enrollments, error: enrollmentsError } = await supabase
+      // First get enrollments, then fetch profiles separately to avoid RLS issues
+      const { data: allEnrollments } = await supabase
         .from("course_enrollments")
-        .select(`
-          student_id,
-          profiles:student_id (
-            id,
-            full_name,
-            email
-          )
-        `)
+        .select("student_id, enrollment_status")
         .eq("course_id", courseId);
 
+      // Now try with active filter
+      const { data: enrollments, error: enrollmentsError } = await supabase
+        .from("course_enrollments")
+        .select("student_id, enrollment_status")
+        .eq("course_id", courseId)
+        .eq("enrollment_status", "active");
+
       if (enrollmentsError) {
-        console.error("Error fetching students:", enrollmentsError);
-      } else if (enrollments) {
+        console.error("Error fetching enrollments:", enrollmentsError);
+        toast({
+          title: "Warning",
+          description: "Failed to load student enrollments. Error: " + enrollmentsError.message,
+          variant: "destructive",
+        });
+      }
+      
+      // Use all enrollments if active filter returns 0 but we have enrollments
+      const finalEnrollments = (enrollments && enrollments.length > 0) ? enrollments : (allEnrollments || []);
+
+      if (finalEnrollments && finalEnrollments.length > 0) {
+        // Fetch student profiles separately using student IDs
+        const studentIds = finalEnrollments.map((e: any) => e.student_id);
+        const { data: studentProfiles, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, full_name, email")
+          .in("id", studentIds);
+
+        if (profilesError) {
+          console.error("Error fetching student profiles:", profilesError);
+          toast({
+            title: "Warning",
+            description: "Failed to load student profiles. This might be an RLS (Row Level Security) issue. Error: " + profilesError.message,
+            variant: "destructive",
+          });
+        }
+        
+        // Create a map for quick lookup
+        const profilesMap = new Map((studentProfiles || []).map((p: any) => [p.id, p]));
         // Fetch submission counts and grades for each student
         const assignmentIds = assignmentsData?.map((a: any) => a.id) || [];
         const studentsWithData = await Promise.all(
           enrollments.map(async (enrollment: any) => {
-            const student = enrollment.profiles || {};
+            const student = profilesMap.get(enrollment.student_id) || {};
             
             // Count submissions for this student in this course
             let count = 0;
