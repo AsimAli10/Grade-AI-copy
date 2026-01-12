@@ -62,13 +62,6 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
         return;
       }
 
-      console.log("Course data loaded:", {
-        id: courseData.id,
-        name: courseData.name,
-        teacher_id: courseData.teacher_id,
-        student_count: courseData.student_count,
-      });
-
       setCourse(courseData);
 
       // Fetch assignments for this course
@@ -176,7 +169,7 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
         // Fetch submission counts and grades for each student
         const assignmentIds = assignmentsData?.map((a: any) => a.id) || [];
         const studentsWithData = await Promise.all(
-          enrollments.map(async (enrollment: any) => {
+          finalEnrollments.map(async (enrollment: any) => {
             const student = profilesMap.get(enrollment.student_id) || {};
             
             // Count submissions for this student in this course

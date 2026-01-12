@@ -13,8 +13,17 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { usePendingSubmissionsCount } from "@/hooks/usePendingSubmissionsCount";
+import type { LucideIcon } from "lucide-react";
 
-const appMenuItems = [
+type MenuItem = {
+  title: string;
+  icon: LucideIcon;
+  url: string;
+  badge?: string;
+  showBadge?: boolean;
+};
+
+const appMenuItems: MenuItem[] = [
   {
     title: "Dashboard",
     icon: LayoutDashboard,

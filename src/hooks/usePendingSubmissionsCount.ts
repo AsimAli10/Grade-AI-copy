@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 /**
@@ -11,16 +11,7 @@ export function usePendingSubmissionsCount() {
   const [count, setCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchPendingCount();
-
-    // Refresh count every 30 seconds
-    const interval = setInterval(fetchPendingCount, 30000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchPendingCount = async () => {
+  const fetchPendingCount = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
 
@@ -102,7 +93,16 @@ export function usePendingSubmissionsCount() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchPendingCount();
+
+    // Refresh count every 30 seconds
+    const interval = setInterval(fetchPendingCount, 30000);
+
+    return () => clearInterval(interval);
+  }, [fetchPendingCount]);
 
   return { count, loading };
 }

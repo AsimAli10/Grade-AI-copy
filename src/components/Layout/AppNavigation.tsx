@@ -15,8 +15,17 @@ import {
   GraduationCap,
 } from "lucide-react";
 import { usePendingSubmissionsCount } from "@/hooks/usePendingSubmissionsCount";
+import type { LucideIcon } from "lucide-react";
 
-const menuItems = [
+type MenuItem = {
+  title: string;
+  icon: LucideIcon;
+  url: string;
+  badge?: string;
+  showBadge?: boolean;
+};
+
+const menuItems: MenuItem[] = [
   {
     title: "Courses",
     icon: BookOpen,

@@ -43,9 +43,14 @@ async function findOrCreateStudentAuthUser(
           .maybeSingle();
         
         if (existingProfile) {
+          // Type assertion needed because generated types may not include role
+          // The role column exists in the database but may not be in generated types
+          // Use double assertion through 'unknown' to bypass type checking
+          const profile = existingProfile as unknown as { id: string; role?: "admin" | "teacher" | "student" };
+          
           // Only update role to student if it's not the teacher account
           // Teachers can be enrolled but should keep their teacher role
-          if (!isTeacher && existingProfile.role !== "student") {
+          if (!isTeacher && profile.role !== "student") {
             await adminClient
               .from("profiles")
               .update({ 
@@ -411,8 +416,9 @@ export async function POST(request: NextRequest) {
             }
 
             // Create or update enrollment using admin client
-            const { error: enrollmentError } = await adminClient
-              .from("course_enrollments")
+            // Type assertion needed because course_enrollments table is not in generated types
+            const { error: enrollmentError } = await ((adminClient as any)
+              .from("course_enrollments"))
               .upsert(
                 {
                   course_id: courseId,
@@ -609,8 +615,9 @@ export async function POST(request: NextRequest) {
                   }
 
                   // Upsert submission using admin client to bypass RLS
-                  const { error: submissionUpsertError } = await adminClient
-                    .from("submissions")
+                  // Type assertion needed because submissions table is not in generated types
+                  const { error: submissionUpsertError } = await ((adminClient as any)
+                    .from("submissions"))
                     .upsert(
                       {
                         assignment_id: assignmentId,
