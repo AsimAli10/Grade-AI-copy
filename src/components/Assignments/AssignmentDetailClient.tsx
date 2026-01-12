@@ -36,7 +36,7 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
         return;
       }
 
-      // Fetch assignment with course info
+      // Fetch assignment with course info and rubric
       const { data: assignmentData, error: assignmentError } = await supabase
         .from("assignments")
         .select(`
@@ -45,9 +45,17 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
           description,
           course_id,
           max_points,
+          rubric_id,
           courses:course_id (
             id,
             name
+          ),
+          rubrics:rubric_id (
+            id,
+            name,
+            description,
+            criteria,
+            total_points
           )
         `)
         .eq("id", assignmentId)
@@ -269,11 +277,58 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
               <CardDescription>Grading criteria</CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground text-sm mb-4">Rubric preview will appear here</p>
-              <Button variant="outline" className="w-full">
-                <Edit className="h-4 w-4 mr-2" />
-                Edit Rubric
-              </Button>
+              {assignment.rubrics ? (
+                <div className="space-y-4">
+                  {assignment.rubrics.description && (
+                    <p className="text-sm text-muted-foreground">{assignment.rubrics.description}</p>
+                  )}
+                  <div className="space-y-3">
+                    {Array.isArray(assignment.rubrics.criteria) && assignment.rubrics.criteria.map((criterion: any, idx: number) => (
+                      <div key={idx} className="border rounded-lg p-3">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-sm">{criterion.name || `Criterion ${idx + 1}`}</h4>
+                            {criterion.description && (
+                              <p className="text-xs text-muted-foreground mt-1">{criterion.description}</p>
+                            )}
+                          </div>
+                          <Badge variant="outline" className="ml-2">
+                            {criterion.max_points || criterion.weight || 0} pts
+                          </Badge>
+                        </div>
+                        {criterion.levels && Array.isArray(criterion.levels) && criterion.levels.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {criterion.levels.map((level: any, levelIdx: number) => (
+                              <div key={levelIdx} className="text-xs text-muted-foreground pl-2 border-l-2 border-muted">
+                                <span className="font-medium">{level.name || `Level ${levelIdx + 1}`}</span>
+                                {level.points !== undefined && (
+                                  <span className="ml-2">({level.points} pts)</span>
+                                )}
+                                {level.description && (
+                                  <p className="mt-0.5 text-muted-foreground/80">{level.description}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pt-2 border-t">
+                    <p className="text-sm font-medium">
+                      Total Points: <span className="text-primary">{assignment.rubrics.total_points || assignment.max_points || 100}</span>
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground text-sm mb-4">No rubric assigned to this assignment</p>
+                  <Button variant="outline" className="w-full">
+                    <Edit className="h-4 w-4 mr-2" />
+                    Add Rubric
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

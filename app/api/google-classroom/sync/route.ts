@@ -469,12 +469,128 @@ export async function POST(request: NextRequest) {
           for (const work of assignmentsOnly) {
             if (!work.id) continue;
 
+            // Log the coursework structure to debug
+            console.log(`[SYNC] Processing assignment ${work.id} (${work.title}):`, {
+              hasGradingCriteria: !!work.gradingCriteria,
+              hasRubricId: !!work.rubricId,
+              maxPoints: work.maxPoints?.value,
+              keys: Object.keys(work),
+            });
+
             // First check if assignment exists
             const { data: existingAssignment } = await (supabase
               .from("assignments") as any)
               .select("id")
               .eq("google_classroom_assignment_id", work.id)
               .maybeSingle();
+
+            // Check if assignment has a rubric
+            // Google Classroom may have rubricId or we need to fetch rubrics separately
+            let rubricId: string | null = null;
+            
+            // Try to list rubrics for this assignment first
+            // Google Classroom Rubrics API requires proper scopes
+            try {
+              const classroom = getClassroomClient(oauth2Client);
+              console.log(`[SYNC] Attempting to fetch rubrics for assignment ${work.id} (${work.title})`);
+              const rubricsListResponse = await classroom.courses.courseWork.rubrics.list({
+                courseId: googleCourse.id,
+                courseWorkId: work.id,
+              });
+              
+              console.log(`[SYNC] Rubrics API response for assignment ${work.id}:`, {
+                hasRubrics: !!rubricsListResponse.data.rubrics,
+                rubricsCount: rubricsListResponse.data.rubrics?.length || 0,
+              });
+
+              if (rubricsListResponse.data.rubrics && rubricsListResponse.data.rubrics.length > 0) {
+                // Use the first rubric (assignments typically have one rubric)
+                const gcRubric = rubricsListResponse.data.rubrics[0];
+                console.log(`[SYNC] Found rubric for assignment ${work.id}:`, {
+                  id: gcRubric.id,
+                  criteriaCount: gcRubric.criteria?.length || 0,
+                });
+                
+                // Convert Google Classroom rubric to GradeAI format
+                const criteria = gcRubric.criteria || [];
+                const totalPoints = criteria.reduce((sum: number, c: any) => {
+                  const maxPoints = Math.max(...(c.levels?.map((l: any) => l.points || 0) || [0]), 0);
+                  return sum + maxPoints;
+                }, 0) || work.maxPoints?.value || 100;
+
+                // Convert criteria
+                const convertedCriteria = criteria.map((criterion: any) => {
+                  const levels = criterion.levels || [];
+                  const maxLevelPoints = Math.max(...levels.map((l: any) => l.points || 0), 0);
+                  
+                  return {
+                    name: criterion.title || "Criterion",
+                    description: criterion.description || "",
+                    weight: maxLevelPoints ? (maxLevelPoints / totalPoints) * 100 : 0,
+                    max_points: maxLevelPoints,
+                    levels: levels.map((level: any) => ({
+                      name: level.title || "",
+                      points: level.points || 0,
+                      description: level.description || "",
+                    })),
+                  };
+                });
+
+                // Create or update rubric
+                const rubricName = `${work.title || "Assignment"} - Rubric`;
+                const { data: existingRubric } = await ((adminClient as any)
+                  .from("rubrics"))
+                  .select("id")
+                  .eq("created_by", session.user.id)
+                  .eq("name", rubricName)
+                  .maybeSingle();
+
+                if (existingRubric) {
+                  await ((adminClient as any)
+                    .from("rubrics"))
+                    .update({
+                      criteria: convertedCriteria,
+                      total_points: totalPoints,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", existingRubric.id);
+                  rubricId = existingRubric.id;
+                  console.log(`[SYNC] ✓ Updated rubric ${rubricId} for assignment ${work.title}`);
+                } else {
+                  const { data: newRubric, error: rubricError } = await ((adminClient as any)
+                    .from("rubrics"))
+                    .insert({
+                      created_by: session.user.id,
+                      name: rubricName,
+                      description: `Rubric for ${work.title || "assignment"}`,
+                      criteria: convertedCriteria,
+                      total_points: totalPoints,
+                      is_template: false,
+                    })
+                    .select()
+                    .single();
+
+                  if (rubricError) {
+                    console.error(`[SYNC ERROR] Error creating rubric for assignment ${work.id}:`, rubricError);
+                  } else {
+                    rubricId = newRubric.id;
+                    console.log(`[SYNC] ✓ Created rubric ${rubricId} for assignment ${work.title}`);
+                  }
+                }
+              } else {
+                console.log(`[SYNC] No rubrics found for assignment ${work.id}`);
+              }
+            } catch (rubricError: any) {
+              // Rubrics API might not be available or assignment might not have rubric
+              if (rubricError?.code === 404 || rubricError?.message?.includes('not found')) {
+                console.log(`[SYNC] No rubric found for assignment ${work.id} (this is normal if assignment has no rubric)`);
+              } else {
+                console.error(`[SYNC ERROR] Error fetching rubrics for assignment ${work.id}:`, rubricError?.message || rubricError);
+              }
+            }
+            
+            // Note: Rubrics are fetched above using the Rubrics API
+            // The list() method should find rubrics even if rubricId is not in coursework
 
             let assignmentId: string;
             if (existingAssignment) {
@@ -489,6 +605,7 @@ export async function POST(request: NextRequest) {
                   due_date: work.dueDate ? new Date(
                     `${work.dueDate.year}-${work.dueDate.month}-${work.dueDate.day}T${work.dueTime?.hours || 23}:${work.dueTime?.minutes || 59}:00`
                   ).toISOString() : null,
+                  rubric_id: rubricId,
                   sync_status: "synced",
                   last_sync_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
@@ -508,6 +625,7 @@ export async function POST(request: NextRequest) {
                     `${work.dueDate.year}-${work.dueDate.month}-${work.dueDate.day}T${work.dueTime?.hours || 23}:${work.dueTime?.minutes || 59}:00`
                   ).toISOString() : null,
                   assignment_type: "essay", // Default, can be enhanced
+                  rubric_id: rubricId,
                   sync_status: "synced",
                   last_sync_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),

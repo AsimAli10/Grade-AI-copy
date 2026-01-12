@@ -22,6 +22,7 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
   const [student, setStudent] = useState<any>(null);
   const [assignment, setAssignment] = useState<any>(null);
   const [grade, setGrade] = useState<any>(null);
+  const [rubric, setRubric] = useState<any>(null);
 
   const fetchSubmissionData = useCallback(async () => {
     try {
@@ -33,7 +34,7 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
         return;
       }
 
-      // Fetch submission with all related data
+      // Fetch submission with all related data including rubric
       const { data: submissionData, error: submissionError } = await supabase
         .from("submissions")
         .select(`
@@ -43,9 +44,17 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
             title,
             description,
             max_points,
+            rubric_id,
             courses:course_id (
               id,
               name
+            ),
+            rubrics:rubric_id (
+              id,
+              name,
+              description,
+              criteria,
+              total_points
             )
           )
         `)
@@ -63,7 +72,13 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
       }
 
       setSubmission(submissionData);
-      setAssignment((submissionData as any).assignments);
+      const assignmentData = (submissionData as any).assignments;
+      setAssignment(assignmentData);
+      
+      // Set rubric if assignment has one
+      if (assignmentData?.rubrics) {
+        setRubric(assignmentData.rubrics);
+      }
 
       // Fetch student profile
       const { data: studentData, error: studentError } = await supabase
@@ -321,39 +336,129 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
               </div>
             )}
 
-            {/* Criteria Cards */}
-            <div className="space-y-3">
-              <div className="border rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium">Criterion 1</span>
-                  <Badge>20/25</Badge>
+            {/* Rubric Display */}
+            {rubric ? (
+              <div className="space-y-3">
+                <div className="border-b pb-2 mb-3">
+                  <h4 className="font-semibold text-sm">Grading Rubric</h4>
+                  {rubric.description && (
+                    <p className="text-xs text-muted-foreground mt-1">{rubric.description}</p>
+                  )}
                 </div>
-                <p className="text-sm text-muted-foreground mb-2">
-                  Explanation of the score and feedback...
-                </p>
-                <p className="text-xs text-primary">Evidence highlighted in submission</p>
+                {Array.isArray(rubric.criteria) && rubric.criteria.length > 0 ? (
+                  rubric.criteria.map((criterion: any, idx: number) => {
+                    // Check if grade has scores for this criterion
+                    const criterionScore = grade?.criterion_scores?.[criterion.name] || 
+                                          grade?.criterion_scores?.[idx] || 
+                                          null;
+                    const maxPoints = criterion.max_points || 0;
+                    
+                    return (
+                      <div key={idx} className="border rounded-lg p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <span className="font-medium text-sm">{criterion.name || `Criterion ${idx + 1}`}</span>
+                            {criterion.description && (
+                              <p className="text-xs text-muted-foreground mt-1">{criterion.description}</p>
+                            )}
+                          </div>
+                          <Badge variant={criterionScore !== null ? "default" : "outline"}>
+                            {criterionScore !== null ? `${criterionScore}/${maxPoints}` : `—/${maxPoints}`}
+                          </Badge>
+                        </div>
+                        
+                        {/* Show levels if available */}
+                        {criterion.levels && Array.isArray(criterion.levels) && criterion.levels.length > 0 && (
+                          <div className="mt-2 pt-2 border-t">
+                            <p className="text-xs font-medium text-muted-foreground mb-1">Grading Levels:</p>
+                            <div className="space-y-1">
+                              {criterion.levels.map((level: any, levelIdx: number) => (
+                                <div key={levelIdx} className="text-xs text-muted-foreground pl-2 border-l-2 border-muted">
+                                  <span className="font-medium">{level.name || `Level ${levelIdx + 1}`}</span>
+                                  {level.points !== undefined && (
+                                    <span className="ml-2">({level.points} pts)</span>
+                                  )}
+                                  {level.description && (
+                                    <p className="mt-0.5 text-muted-foreground/80">{level.description}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Show AI explanation if available */}
+                        {grade?.ai_explanations?.[criterion.name] && (
+                          <div className="mt-2 pt-2 border-t">
+                            <p className="text-xs font-medium text-muted-foreground mb-1">AI Feedback:</p>
+                            <p className="text-xs">{grade.ai_explanations[criterion.name]}</p>
+                          </div>
+                        )}
+                        
+                        {/* Show evidence highlights if available */}
+                        {grade?.evidence_highlights?.[criterion.name] && 
+                         Array.isArray(grade.evidence_highlights[criterion.name]) && 
+                         grade.evidence_highlights[criterion.name].length > 0 && (
+                          <div className="mt-2 pt-2 border-t">
+                            <p className="text-xs font-medium text-primary mb-1">Evidence Highlighted:</p>
+                            <ul className="text-xs text-muted-foreground list-disc list-inside">
+                              {grade.evidence_highlights[criterion.name].map((highlight: string, hIdx: number) => (
+                                <li key={hIdx}>{highlight}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-sm text-muted-foreground">No criteria defined in rubric</p>
+                )}
               </div>
-              {/* More criteria cards... */}
-            </div>
+            ) : (
+              <div className="border rounded-lg p-4">
+                <p className="text-sm text-muted-foreground">
+                  No rubric assigned to this assignment. 
+                  {assignment?.rubric_id ? " Rubric may not be synced yet." : " Add a rubric in Google Classroom and re-sync."}
+                </p>
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex flex-col gap-2 pt-4 border-t">
-              <Button className="w-full">
-                <CheckCircle2 className="h-4 w-4 mr-2" />
-                Accept AI Grade
-              </Button>
-              <Button variant="outline" className="w-full">
-                <Edit className="h-4 w-4 mr-2" />
-                Edit Scores
-              </Button>
-              <Button variant="outline" className="w-full">
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Comment to Student
-              </Button>
-              <Button variant="outline" className="w-full">
-                <Flag className="h-4 w-4 mr-2" />
-                Flag for Regrade
-              </Button>
+              {grade ? (
+                <>
+                  <Button className="w-full" disabled>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Accept AI Grade
+                  </Button>
+                  <Button variant="outline" className="w-full" disabled>
+                    <Edit className="h-4 w-4 mr-2" />
+                    Edit Scores
+                  </Button>
+                  <Button variant="outline" className="w-full" disabled>
+                    <MessageSquare className="h-4 w-4 mr-2" />
+                    Comment to Student
+                  </Button>
+                  <Button variant="outline" className="w-full" disabled>
+                    <Flag className="h-4 w-4 mr-2" />
+                    Flag for Regrade
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center mt-2">
+                    Grading actions coming soon
+                  </p>
+                </>
+              ) : (
+                <div className="text-center py-4">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    No grade assigned yet. AI grading will be available soon.
+                  </p>
+                  <Button variant="outline" className="w-full" disabled>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Grade with AI (Coming Soon)
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
