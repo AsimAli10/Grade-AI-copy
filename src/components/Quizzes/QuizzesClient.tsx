@@ -371,7 +371,7 @@ export default function QuizzesClient() {
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {quizzes.map((quiz: any) => (
-            <Card key={quiz.id} className="cursor-pointer hover:shadow-md transition-all border-border/50 shadow-sm">
+            <Card key={quiz.id} className="hover:shadow-md transition-all border-border/50 shadow-sm">
               <CardHeader className="pb-4">
                 <CardTitle className="text-xl">{quiz.title}</CardTitle>
                 <CardDescription className="text-base">{quiz.courseName}</CardDescription>
@@ -383,9 +383,11 @@ export default function QuizzesClient() {
                     {quiz.published ? "Published" : "Draft"}
                   </Badge>
                 </div>
-                <Button variant="outline" className="w-full">
-                  View Quiz
-                </Button>
+                <Link href={`/quizzes/${quiz.id}`}>
+                  <Button variant="outline" className="w-full">
+                    View Quiz
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
           ))}

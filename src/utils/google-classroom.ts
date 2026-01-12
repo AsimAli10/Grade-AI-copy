@@ -35,6 +35,7 @@ export function getAuthorizationUrl(userId: string): string {
     'https://www.googleapis.com/auth/classroom.announcements.readonly', // For fetching announcements
     'https://www.googleapis.com/auth/classroom.profile.emails',
     'https://www.googleapis.com/auth/classroom.profile.photos',
+    'https://www.googleapis.com/auth/forms.body.readonly', // For fetching quiz form questions
   ];
 
   const authUrl = oauth2Client.generateAuthUrl({

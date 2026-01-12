@@ -26,11 +26,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get user's courses
+    // Get user's active courses (filter out inactive Google Classroom courses)
     const { data: courses } = await (supabase
       .from("courses") as any)
       .select("id")
-      .eq("teacher_id", session.user.id);
+      .eq("teacher_id", session.user.id)
+      .eq("is_active", true);
 
     const courseIds = courses?.map((c: any) => c.id) || [];
 
@@ -38,13 +39,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ quizzes: [] });
     }
 
-    // Fetch quizzes for user's courses
+    // Fetch quizzes for user's courses (include questions field to count them)
     const { data: quizzes, error } = await (supabase
       .from("quizzes") as any)
       .select(`
         id,
         title,
         description,
+        questions,
         time_limit_minutes,
         max_attempts,
         is_published,

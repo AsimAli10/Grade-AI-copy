@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
+import { google } from 'googleapis';
 import {
   getAuthenticatedClient,
   refreshAccessToken,
@@ -302,6 +303,7 @@ export async function POST(request: NextRequest) {
     let studentsSynced = 0;
     let submissionsSynced = 0;
     let assignmentsSynced = 0;
+    let quizzesSynced = 0;
     let announcementsSynced = 0;
 
     // Sync each course
@@ -866,6 +868,272 @@ export async function POST(request: NextRequest) {
           }
           
           assignmentsSynced += courseAssignmentsSynced;
+
+          // Now sync quizzes
+          // In Google Classroom, there are two types of quizzes:
+          // 1. Quiz assignments with Google Forms attached (workType: ASSIGNMENT with form material)
+          // 2. Standalone question items (workType: SHORT_ANSWER_QUESTION or MULTIPLE_CHOICE_QUESTION)
+          //    These are questions posted directly in Google Classroom
+          
+          // First, find quiz assignments with forms
+          const allAssignments = coursework.filter((work: any) => work.workType === "ASSIGNMENT");
+          const quizAssignments: any[] = [];
+          
+          // Check each assignment to see if it has a form attached
+          for (const assignment of allAssignments) {
+            if (!assignment.id) continue;
+            
+            // Fetch full details to check for form materials
+            try {
+              const classroom = getClassroomClient(oauth2Client);
+              const fullResponse = await classroom.courses.courseWork.get({
+                courseId: googleCourse.id,
+                id: assignment.id,
+              });
+              
+              if (fullResponse.data?.materials?.some((m: any) => m.form)) {
+                quizAssignments.push(fullResponse.data);
+                console.log(`[SYNC] Found quiz assignment ${assignment.id} (${assignment.title}) with form attached`);
+              }
+            } catch (getError: any) {
+              // If we can't fetch details, check if materials are in the list response
+              if (assignment.materials?.some((m: any) => m.form)) {
+                quizAssignments.push(assignment);
+              }
+            }
+          }
+          
+          // Second, find standalone question items (SHORT_ANSWER_QUESTION, MULTIPLE_CHOICE_QUESTION)
+          const questionItems = coursework.filter((work: any) => 
+            work.workType === "SHORT_ANSWER_QUESTION" || 
+            work.workType === "MULTIPLE_CHOICE_QUESTION"
+          );
+          
+          // Combine both types
+          const quizzesOnly = [...quizAssignments, ...questionItems];
+
+          let courseQuizzesSynced = 0;
+          for (const quizWork of quizzesOnly) {
+            if (!quizWork.id) continue;
+
+            // Fetch full details to ensure we have all materials (forms)
+            let fullQuizWork = quizWork;
+            try {
+              const classroom = getClassroomClient(oauth2Client);
+              const fullResponse = await classroom.courses.courseWork.get({
+                courseId: googleCourse.id,
+                id: quizWork.id,
+              });
+              if (fullResponse.data) {
+                fullQuizWork = fullResponse.data;
+                console.log(`[SYNC] Fetched full details for quiz assignment ${quizWork.id}`);
+              }
+            } catch (getError: any) {
+              console.error(`[SYNC ERROR] Error fetching full quiz details for ${quizWork.id}:`, getError?.message || getError);
+              // Continue with the list response data
+            }
+
+            console.log(`[SYNC] Processing ${fullQuizWork.workType === "ASSIGNMENT" ? "quiz assignment" : "question item"} ${fullQuizWork.id} (${fullQuizWork.title}):`, {
+              workType: fullQuizWork.workType,
+              hasForm: !!fullQuizWork.materials?.find((m: any) => m.form),
+              materialsCount: fullQuizWork.materials?.length || 0,
+              title: fullQuizWork.title,
+              description: fullQuizWork.description,
+            });
+
+            // Extract questions from the quiz
+            const questions: any[] = [];
+
+            // Check if this is a quiz assignment with a form attached
+            const formMaterial = fullQuizWork.materials?.find((m: any) => m.form);
+            if (formMaterial?.form) {
+              // This is a quiz assignment with a Google Form
+              // Extract form ID from the form URL
+              const formUrl = formMaterial.form.formUrl || formMaterial.form.responseUrl;
+              console.log(`[SYNC] Found form material for quiz ${fullQuizWork.id}:`, {
+                formUrl: formUrl,
+                formKeys: Object.keys(formMaterial.form),
+              });
+              
+              if (formUrl) {
+                // Extract form ID from URL (format: https://docs.google.com/forms/d/FORM_ID/...)
+                const formIdMatch = formUrl.match(/\/forms\/d\/([a-zA-Z0-9-_]+)/);
+                if (formIdMatch && formIdMatch[1]) {
+                  const formId = formIdMatch[1];
+                  console.log(`[SYNC] Extracted form ID ${formId} from URL for quiz ${fullQuizWork.id}`);
+                  
+                  // Try to fetch form questions using Forms API
+                  try {
+                    const forms = google.forms({ version: 'v1', auth: oauth2Client });
+                    const formResponse = await forms.forms.get({ formId });
+                    
+                    console.log(`[SYNC] Form response for ${formId}:`, {
+                      hasItems: !!formResponse.data.items,
+                      itemsCount: formResponse.data.items?.length || 0,
+                    });
+                    
+                    if (formResponse.data.items) {
+                      // Convert form items to quiz questions
+                      for (const item of formResponse.data.items) {
+                        if (item.questionItem) {
+                          const questionItem = item.questionItem;
+                          const questionId = item.itemId || `form_${formId}_${item.title}`;
+                          
+                          // Handle different question types
+                          if (questionItem.question?.choiceQuestion) {
+                            // Multiple choice
+                            const choiceQ = questionItem.question.choiceQuestion;
+                            const questionText = (questionItem.question as any).questionText || item.title || "Question";
+                            questions.push({
+                              id: questionId,
+                              type: 'multiple_choice',
+                              question: questionText,
+                              options: choiceQ.options?.map((opt: any) => opt.value || "") || [],
+                              correct_answer: choiceQ.options?.find((opt: any) => opt.isCorrect)?.value,
+                              points: 1,
+                            });
+                          } else if (questionItem.question?.textQuestion) {
+                            // Short answer or text
+                            const questionText = (questionItem.question as any).questionText || item.title || "Question";
+                            questions.push({
+                              id: questionId,
+                              type: 'short_answer',
+                              question: questionText,
+                              points: 1,
+                            });
+                          }
+                        }
+                      }
+                      console.log(`[SYNC] ✓ Extracted ${questions.length} questions from form ${formId}`);
+                    } else {
+                      console.warn(`[SYNC] Form ${formId} has no items/questions`);
+                    }
+                  } catch (formError: any) {
+                    console.error(`[SYNC ERROR] Error fetching form questions for ${formId}:`, formError?.message || formError);
+                    if (formError?.code === 403) {
+                      console.error(`[SYNC ERROR] Missing Forms API scope. Need to re-authorize with forms.body.readonly scope.`);
+                    }
+                  }
+                } else {
+                  console.warn(`[SYNC] Could not extract form ID from URL: ${formUrl}`);
+                }
+              } else {
+                console.warn(`[SYNC] Form material found but no formUrl or responseUrl`);
+              }
+            } else {
+              console.warn(`[SYNC] Quiz assignment ${fullQuizWork.id} (${fullQuizWork.title}) has no form attached. Materials:`, fullQuizWork.materials?.length || 0);
+            }
+
+            // For standalone question items (SHORT_ANSWER_QUESTION, MULTIPLE_CHOICE_QUESTION),
+            // the question text is in the title or description field
+            // These are questions posted directly in Google Classroom (not quiz assignments with forms)
+            if ((fullQuizWork.workType === "SHORT_ANSWER_QUESTION" || fullQuizWork.workType === "MULTIPLE_CHOICE_QUESTION") && questions.length === 0) {
+              // Use title or description as the question text
+              const questionText = fullQuizWork.title || fullQuizWork.description || "Question";
+              
+              if (fullQuizWork.workType === "MULTIPLE_CHOICE_QUESTION") {
+                // Try to extract choices from multipleChoiceQuestion field
+                let options: string[] = [];
+                let correctAnswer: string | undefined;
+                
+                if (fullQuizWork.multipleChoiceQuestion) {
+                  const mcq = fullQuizWork.multipleChoiceQuestion;
+                  options = mcq.choices || [];
+                  
+                  // Get correct answer if available
+                  if (mcq.correctChoiceIndex !== undefined && mcq.choices && mcq.choices[mcq.correctChoiceIndex]) {
+                    correctAnswer = mcq.choices[mcq.correctChoiceIndex];
+                  }
+                  
+                  console.log(`[SYNC] Found MCQ data for ${fullQuizWork.id}:`, {
+                    hasChoices: !!mcq.choices,
+                    choicesCount: mcq.choices?.length || 0,
+                    correctIndex: mcq.correctChoiceIndex,
+                    allKeys: Object.keys(mcq),
+                  });
+                } else {
+                  console.warn(`[SYNC] No multipleChoiceQuestion field found for ${fullQuizWork.id}. Available keys:`, Object.keys(fullQuizWork));
+                }
+                
+                questions.push({
+                  id: `mcq_${fullQuizWork.id}`,
+                  type: 'multiple_choice',
+                  question: questionText,
+                  options: options,
+                  correct_answer: correctAnswer,
+                  points: fullQuizWork.maxPoints?.value || 1,
+                });
+                console.log(`[SYNC] Extracted standalone multiple choice question from ${fullQuizWork.id}: "${questionText}" with ${options.length} options`);
+              } else if (fullQuizWork.workType === "SHORT_ANSWER_QUESTION") {
+                questions.push({
+                  id: `saq_${fullQuizWork.id}`,
+                  type: 'short_answer',
+                  question: questionText,
+                  points: fullQuizWork.maxPoints?.value || 1,
+                });
+                console.log(`[SYNC] Extracted standalone short answer question from ${fullQuizWork.id}: "${questionText}"`);
+              }
+            }
+            
+            // If no questions extracted, skip this quiz
+            if (questions.length === 0) {
+              console.warn(`[SYNC] No questions found in quiz ${fullQuizWork.id} (${fullQuizWork.title}). This might not be a quiz assignment with a form, or the form has no questions.`);
+              continue;
+            }
+
+            // Check if quiz already exists
+            const { data: existingQuiz } = await ((adminClient as any)
+              .from("quizzes"))
+              .select("id")
+              .eq("google_classroom_quiz_id", fullQuizWork.id)
+              .maybeSingle();
+
+            let quizId: string;
+            if (existingQuiz) {
+              quizId = existingQuiz.id;
+              // Update existing quiz
+              await ((adminClient as any)
+                .from("quizzes"))
+                .update({
+                  title: fullQuizWork.title || "Untitled Quiz",
+                  description: fullQuizWork.description || null,
+                  questions: questions,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", quizId);
+            } else {
+              // Create new quiz
+              const { data: newQuiz, error: quizError } = await ((adminClient as any)
+                .from("quizzes"))
+                .insert({
+                  course_id: courseId,
+                  created_by: session.user.id,
+                  title: fullQuizWork.title || "Untitled Quiz",
+                  description: fullQuizWork.description || null,
+                  questions: questions,
+                  time_limit_minutes: null, // Google Classroom doesn't provide this
+                  max_attempts: 1,
+                  is_published: fullQuizWork.state === "PUBLISHED",
+                  google_classroom_quiz_id: fullQuizWork.id,
+                })
+                .select()
+                .single();
+
+              if (quizError || !newQuiz) {
+                console.error(`[SYNC ERROR] Error creating quiz ${fullQuizWork.id}:`, quizError);
+                continue;
+              }
+              quizId = newQuiz.id;
+            }
+
+            console.log(`[SYNC] ✓ Synced quiz ${fullQuizWork.title} with ${questions.length} question(s)`);
+            courseQuizzesSynced++;
+          }
+
+          if (courseQuizzesSynced > 0) {
+            console.log(`[SYNC] ✓ Synced ${courseQuizzesSynced} quiz(zes) for course ${googleCourse.name}`);
+            quizzesSynced += courseQuizzesSynced;
+          }
         } catch (courseworkError) {
           console.error("[SYNC ERROR] Error syncing coursework:", courseworkError);
         }
@@ -1047,6 +1315,7 @@ export async function POST(request: NextRequest) {
       total: googleCourses.length,
       studentsSynced,
       assignmentsSynced,
+      quizzesSynced,
       submissionsSynced,
       announcementsSynced,
     });

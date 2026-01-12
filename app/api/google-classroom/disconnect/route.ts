@@ -92,6 +92,16 @@ export async function DELETE(request: NextRequest) {
         console.error("Error deleting assignments:", assignmentsError);
       }
 
+      // Delete quizzes for these courses
+      const { error: quizzesError } = await (supabase
+        .from("quizzes") as any)
+        .delete()
+        .in("course_id", courseIds);
+
+      if (quizzesError) {
+        console.error("Error deleting quizzes:", quizzesError);
+      }
+
       // Delete Google Classroom announcements (forum_messages with google_classroom_announcement_id)
       // First get forum IDs for these courses
       const { data: courseForums } = await (supabase
