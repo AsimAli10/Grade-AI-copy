@@ -471,12 +471,67 @@ export async function POST(request: NextRequest) {
           for (const work of assignmentsOnly) {
             if (!work.id) continue;
 
+            // Fetch full details to get materials/attachments
+            let fullWork = work;
+            try {
+              const classroom = getClassroomClient(oauth2Client);
+              const fullResponse = await classroom.courses.courseWork.get({
+                courseId: googleCourse.id,
+                id: work.id,
+              });
+              if (fullResponse.data) {
+                fullWork = fullResponse.data;
+              }
+            } catch (getError: any) {
+              console.error(`[SYNC ERROR] Error fetching full assignment details for ${work.id}:`, getError?.message || getError);
+              // Continue with list response data
+            }
+
+            // Extract attachments/materials from the assignment
+            const attachments: any[] = [];
+            if (fullWork.materials && Array.isArray(fullWork.materials)) {
+              for (const material of fullWork.materials) {
+                const attachment: any = {
+                  type: null,
+                  title: null,
+                  url: null,
+                };
+
+                // Handle different material types
+                if (material.driveFile) {
+                  attachment.type = "drive_file";
+                  attachment.title = material.driveFile.driveFile?.title || "Drive File";
+                  attachment.url = material.driveFile.driveFile?.alternateLink || null;
+                  attachment.id = material.driveFile.driveFile?.id || null;
+                } else if (material.youtubeVideo) {
+                  attachment.type = "youtube_video";
+                  attachment.title = material.youtubeVideo.title || "YouTube Video";
+                  attachment.url = material.youtubeVideo.alternateLink || null;
+                  attachment.id = material.youtubeVideo.id || null;
+                } else if (material.link) {
+                  attachment.type = "link";
+                  attachment.title = material.link.title || material.link.url || "Link";
+                  attachment.url = material.link.url || null;
+                } else if (material.form) {
+                  attachment.type = "form";
+                  attachment.title = "Google Form";
+                  attachment.url = material.form.formUrl || material.form.responseUrl || null;
+                  attachment.id = material.form.formId || null;
+                }
+
+                if (attachment.type) {
+                  attachments.push(attachment);
+                }
+              }
+            }
+
             // Log the coursework structure to debug
-            console.log(`[SYNC] Processing assignment ${work.id} (${work.title}):`, {
-              hasGradingCriteria: !!work.gradingCriteria,
-              hasRubricId: !!work.rubricId,
-              maxPoints: work.maxPoints?.value,
-              keys: Object.keys(work),
+            console.log(`[SYNC] Processing assignment ${fullWork.id} (${fullWork.title}):`, {
+              hasGradingCriteria: !!fullWork.gradingCriteria,
+              hasRubricId: !!fullWork.rubricId,
+              maxPoints: fullWork.maxPoints?.value,
+              materialsCount: fullWork.materials?.length || 0,
+              attachmentsCount: attachments.length,
             });
 
             // First check if assignment exists
@@ -598,16 +653,17 @@ export async function POST(request: NextRequest) {
             if (existingAssignment) {
               assignmentId = existingAssignment.id;
               // Update existing assignment
-              await (supabase
-                .from("assignments") as any)
+            await (supabase
+              .from("assignments") as any)
                 .update({
-                  title: work.title || "Untitled Assignment",
-                  description: work.description || null,
-                  max_points: work.maxPoints?.value || 100,
-                  due_date: work.dueDate ? new Date(
-                    `${work.dueDate.year}-${work.dueDate.month}-${work.dueDate.day}T${work.dueTime?.hours || 23}:${work.dueTime?.minutes || 59}:00`
+                  title: fullWork.title || "Untitled Assignment",
+                  description: fullWork.description || null,
+                  max_points: fullWork.maxPoints?.value || 100,
+                  due_date: fullWork.dueDate ? new Date(
+                    `${fullWork.dueDate.year}-${fullWork.dueDate.month}-${fullWork.dueDate.day}T${fullWork.dueTime?.hours || 23}:${fullWork.dueTime?.minutes || 59}:00`
                   ).toISOString() : null,
                   rubric_id: rubricId,
+                  attachments: attachments.length > 0 ? attachments : null,
                   sync_status: "synced",
                   last_sync_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
@@ -619,15 +675,16 @@ export async function POST(request: NextRequest) {
                 .from("assignments") as any)
                 .insert({
                   course_id: courseId,
-                  google_classroom_assignment_id: work.id,
-                  title: work.title || "Untitled Assignment",
-                  description: work.description || null,
-                  max_points: work.maxPoints?.value || 100,
-                  due_date: work.dueDate ? new Date(
-                    `${work.dueDate.year}-${work.dueDate.month}-${work.dueDate.day}T${work.dueTime?.hours || 23}:${work.dueTime?.minutes || 59}:00`
+                  google_classroom_assignment_id: fullWork.id,
+                  title: fullWork.title || "Untitled Assignment",
+                  description: fullWork.description || null,
+                  max_points: fullWork.maxPoints?.value || 100,
+                  due_date: fullWork.dueDate ? new Date(
+                    `${fullWork.dueDate.year}-${fullWork.dueDate.month}-${fullWork.dueDate.day}T${fullWork.dueTime?.hours || 23}:${fullWork.dueTime?.minutes || 59}:00`
                   ).toISOString() : null,
                   assignment_type: "essay", // Default, can be enhanced
                   rubric_id: rubricId,
+                  attachments: attachments.length > 0 ? attachments : null,
                   sync_status: "synced",
                   last_sync_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
@@ -844,9 +901,9 @@ export async function POST(request: NextRequest) {
                         submitted_at: googleSubmission.submissionHistory?.[0]?.stateHistory?.[0]?.stateTimestamp
                           ? new Date(googleSubmission.submissionHistory[0].stateHistory[0].stateTimestamp).toISOString()
                           : new Date().toISOString(),
-                        updated_at: new Date().toISOString(),
-                      },
-                      {
+                  updated_at: new Date().toISOString(),
+                },
+                {
                         onConflict: "assignment_id,student_id",
                       }
                     );

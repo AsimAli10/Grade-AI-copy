@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FileText, Download, RefreshCw, Edit } from "lucide-react";
+import { FileText, Download, RefreshCw, Edit, Link as LinkIcon, Youtube, File, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
@@ -46,6 +46,7 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
           course_id,
           max_points,
           rubric_id,
+          attachments,
           courses:course_id (
             id,
             name
@@ -185,6 +186,7 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
   }
 
   const course = assignment.courses || {};
+  const attachments = Array.isArray(assignment.attachments) ? assignment.attachments : [];
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -270,7 +272,74 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
           </Card>
         </div>
 
-        <div>
+        <div className="space-y-6">
+          {attachments.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Attachments</CardTitle>
+                <CardDescription>Files, links, and materials attached to this assignment</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {attachments.map((attachment: any, idx: number) => {
+                    const getIcon = () => {
+                      switch (attachment.type) {
+                        case "drive_file":
+                          return <File className="h-4 w-4" />;
+                        case "youtube_video":
+                          return <Youtube className="h-4 w-4" />;
+                        case "link":
+                          return <LinkIcon className="h-4 w-4" />;
+                        case "form":
+                          return <FileText className="h-4 w-4" />;
+                        default:
+                          return <File className="h-4 w-4" />;
+                      }
+                    };
+
+                    const getTypeLabel = () => {
+                      switch (attachment.type) {
+                        case "drive_file":
+                          return "Drive File";
+                        case "youtube_video":
+                          return "YouTube Video";
+                        case "link":
+                          return "Link";
+                        case "form":
+                          return "Google Form";
+                        default:
+                          return "Attachment";
+                      }
+                    };
+
+                    return (
+                      <div key={idx} className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                        <div className="flex-shrink-0">
+                          {getIcon()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{attachment.title || getTypeLabel()}</p>
+                          <p className="text-xs text-muted-foreground">{getTypeLabel()}</p>
+                        </div>
+                        {attachment.url && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            asChild
+                          >
+                            <a href={attachment.url} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Rubric</CardTitle>
