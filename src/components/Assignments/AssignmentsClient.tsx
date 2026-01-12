@@ -30,11 +30,12 @@ export default function AssignmentsClient() {
         return;
       }
 
-      // Get user's courses first
+      // Get user's active courses first (exclude inactive/deleted courses)
       const { data: userCourses } = await supabase
         .from("courses")
         .select("id")
-        .eq("teacher_id", session.user.id);
+        .eq("teacher_id", session.user.id)
+        .eq("is_active", true);
 
       const courseIds = userCourses?.map((c: any) => c.id) || [];
 
@@ -44,7 +45,8 @@ export default function AssignmentsClient() {
         return;
       }
 
-      // Fetch assignments from user's courses
+      // Fetch assignments from user's active courses
+      // Also filter to ensure the course still exists and is active
       const { data: assignmentsData, error } = await supabase
         .from("assignments")
         .select(`
@@ -58,7 +60,8 @@ export default function AssignmentsClient() {
           course_id,
           courses:course_id (
             id,
-            name
+            name,
+            is_active
           )
         `)
         .in("course_id", courseIds)
@@ -74,9 +77,15 @@ export default function AssignmentsClient() {
         return;
       }
 
+      // Filter out assignments from inactive or deleted courses
+      const validAssignments = (assignmentsData || []).filter((assignment: any) => {
+        const course = assignment.courses;
+        return course && course.is_active !== false;
+      });
+
       // Fetch submission counts for each assignment
       const assignmentsWithCounts = await Promise.all(
-        (assignmentsData || []).map(async (assignment: any) => {
+        validAssignments.map(async (assignment: any) => {
           const { count } = await supabase
             .from("submissions")
             .select("*", { count: "exact", head: true })

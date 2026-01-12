@@ -32,6 +32,7 @@ export function getAuthorizationUrl(userId: string): string {
     'https://www.googleapis.com/auth/classroom.coursework.me.readonly',
     'https://www.googleapis.com/auth/classroom.coursework.students.readonly',
     'https://www.googleapis.com/auth/classroom.rosters.readonly',
+    'https://www.googleapis.com/auth/classroom.announcements.readonly', // For fetching announcements
     'https://www.googleapis.com/auth/classroom.profile.emails',
     'https://www.googleapis.com/auth/classroom.profile.photos',
   ];
@@ -273,6 +274,50 @@ export async function fetchStudentSubmissions(
   }
 
   return fullSubmissions;
+}
+
+/**
+ * Fetch announcements for a course from Google Classroom
+ */
+export async function fetchAnnouncements(
+  oauth2Client: OAuth2Client,
+  courseId: string
+) {
+  const classroom = getClassroomClient(oauth2Client);
+  
+  const announcements: any[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    try {
+      const response = await classroom.courses.announcements.list({
+        courseId,
+        pageSize: 100,
+        pageToken,
+        // Don't use orderBy - it might not be supported or might cause errors
+        // We'll sort in memory if needed
+      });
+
+      if (response.data.announcements) {
+        announcements.push(...response.data.announcements);
+      }
+
+      pageToken = response.data.nextPageToken || undefined;
+    } catch (error: any) {
+      console.error(`[ANNOUNCEMENTS ERROR] Error fetching announcements for course ${courseId}:`, error?.message || error);
+      // Break on error to avoid infinite loop
+      break;
+    }
+  } while (pageToken);
+
+  // Sort by updateTime descending (most recent first)
+  announcements.sort((a, b) => {
+    const timeA = a.updateTime ? new Date(a.updateTime).getTime() : 0;
+    const timeB = b.updateTime ? new Date(b.updateTime).getTime() : 0;
+    return timeB - timeA;
+  });
+
+  return announcements;
 }
 
 

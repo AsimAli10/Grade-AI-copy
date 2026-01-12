@@ -39,7 +39,7 @@ export async function DELETE(request: NextRequest) {
     } else if (googleCourses && googleCourses.length > 0) {
       const courseIds = googleCourses.map((c: any) => c.id);
 
-      // Get all assignments for these courses
+      // Get all assignments for these courses (to get assignment IDs for submissions deletion)
       const { data: assignments, error: assignmentsFetchError } = await (supabase
         .from("assignments") as any)
         .select("id")
@@ -47,10 +47,12 @@ export async function DELETE(request: NextRequest) {
 
       if (assignmentsFetchError) {
         console.error("Error fetching assignments:", assignmentsFetchError);
-      } else if (assignments && assignments.length > 0) {
-        const assignmentIds = assignments.map((a: any) => a.id);
+      }
 
-        // Delete submissions for these assignments (cascade will handle grades)
+      // Delete submissions for assignments in these courses (even if assignments query failed)
+      // First try to delete by assignment IDs if we have them
+      if (assignments && assignments.length > 0) {
+        const assignmentIds = assignments.map((a: any) => a.id);
         const { error: submissionsError } = await (supabase
           .from("submissions") as any)
           .delete()
@@ -59,15 +61,66 @@ export async function DELETE(request: NextRequest) {
         if (submissionsError) {
           console.error("Error deleting submissions:", submissionsError);
         }
-
-        // Delete assignments
-        const { error: assignmentsError } = await (supabase
+      } else {
+        // If we don't have assignment IDs, delete submissions by joining through assignments
+        // This is a fallback - delete all submissions for assignments in these courses
+        const { data: allAssignments } = await (supabase
           .from("assignments") as any)
-          .delete()
+          .select("id")
           .in("course_id", courseIds);
 
-        if (assignmentsError) {
-          console.error("Error deleting assignments:", assignmentsError);
+        if (allAssignments && allAssignments.length > 0) {
+          const allAssignmentIds = allAssignments.map((a: any) => a.id);
+          const { error: submissionsError } = await (supabase
+            .from("submissions") as any)
+            .delete()
+            .in("assignment_id", allAssignmentIds);
+
+          if (submissionsError) {
+            console.error("Error deleting submissions (fallback):", submissionsError);
+          }
+        }
+      }
+
+      // Delete assignments for these courses (regardless of whether we found them)
+      const { error: assignmentsError } = await (supabase
+        .from("assignments") as any)
+        .delete()
+        .in("course_id", courseIds);
+
+      if (assignmentsError) {
+        console.error("Error deleting assignments:", assignmentsError);
+      }
+
+      // Delete Google Classroom announcements (forum_messages with google_classroom_announcement_id)
+      // First get forum IDs for these courses
+      const { data: courseForums } = await (supabase
+        .from("forums") as any)
+        .select("id")
+        .in("course_id", courseIds);
+
+      if (courseForums && courseForums.length > 0) {
+        const forumIds = courseForums.map((f: any) => f.id);
+        
+        // Delete forum messages that are Google Classroom announcements
+        const { error: announcementsError } = await (supabase
+          .from("forum_messages") as any)
+          .delete()
+          .in("forum_id", forumIds)
+          .not("google_classroom_announcement_id", "is", null);
+
+        if (announcementsError) {
+          console.error("Error deleting Google Classroom announcements:", announcementsError);
+        }
+
+        // Delete the forums themselves (they were created for GC announcements)
+        const { error: forumsError } = await (supabase
+          .from("forums") as any)
+          .delete()
+          .in("id", forumIds);
+
+        if (forumsError) {
+          console.error("Error deleting forums:", forumsError);
         }
       }
 

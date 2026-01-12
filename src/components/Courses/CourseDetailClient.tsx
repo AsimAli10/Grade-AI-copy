@@ -23,6 +23,7 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
   const [assignments, setAssignments] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
+  const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -307,6 +308,39 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
           });
         }
       }
+
+      // Fetch announcements for this course from forum_messages
+      // First find the forum for this course
+      const { data: courseForum } = await supabase
+        .from("forums")
+        .select("id")
+        .eq("course_id", courseId)
+        .maybeSingle();
+
+      if (courseForum) {
+        // Fetch forum messages that are Google Classroom announcements
+        const { data: announcementsData, error: announcementsError } = await supabase
+          .from("forum_messages")
+          .select(`
+            *,
+            profiles:author_id (
+              id,
+              full_name,
+              email
+            )
+          `)
+          .eq("forum_id", (courseForum as any).id)
+          .not("google_classroom_announcement_id", "is", null)
+          .order("google_classroom_update_time", { ascending: false });
+
+        if (announcementsError) {
+          console.error("Error fetching announcements:", announcementsError);
+        } else {
+          setAnnouncements(announcementsData || []);
+        }
+      } else {
+        setAnnouncements([]);
+      }
     } catch (error) {
       console.error("Error fetching course data:", error);
       toast({
@@ -558,8 +592,8 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-xl">Forum</CardTitle>
-                  <CardDescription className="text-base">Course discussion forum</CardDescription>
+                  <CardTitle className="text-xl">Announcements</CardTitle>
+                  <CardDescription className="text-base">Google Classroom announcements and course updates</CardDescription>
                 </div>
                 <Button>
                   <Plus className="h-4 w-4 mr-2" />
@@ -568,33 +602,59 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
               </div>
             </CardHeader>
             <CardContent>
-              {forumPosts.length === 0 ? (
+              {announcements.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <MessageSquare className="h-12 w-12 text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground text-center">No forum posts yet</p>
+                  <p className="text-muted-foreground text-center">No announcements yet</p>
+                  <p className="text-sm text-muted-foreground mt-2">Sync your Google Classroom to import announcements</p>
                 </div>
               ) : (
-              <div className="space-y-3">
-                {forumPosts.map((post) => (
-                  <div key={post.id} className="flex items-start justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        {post.pinned && <Pin className="h-4 w-4 text-primary" />}
-                        <h3 className="font-semibold text-base">{post.title}</h3>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span>By {post.author}</span>
-                        <span>•</span>
-                        <span>{post.replies} replies</span>
-                        <span>•</span>
-                        <span>{post.views} views</span>
-                        <span>•</span>
-                        <span>Last activity: {new Date(post.lastActivity).toLocaleDateString()}</span>
+              <div className="space-y-4">
+                {announcements.map((announcement: any) => (
+                  <div key={announcement.id} className="p-4 border rounded-lg hover:bg-muted/50 transition-colors">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1">
+                        {announcement.content && (
+                          <div className="prose prose-sm max-w-none mb-3">
+                            <p className="whitespace-pre-wrap text-base">{announcement.content}</p>
+                          </div>
+                        )}
+                        {announcement.google_classroom_materials && Array.isArray(announcement.google_classroom_materials) && announcement.google_classroom_materials.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-sm font-medium mb-1">Attachments:</p>
+                            <ul className="list-disc list-inside text-sm text-muted-foreground">
+                              {announcement.google_classroom_materials.map((material: any, idx: number) => (
+                                <li key={idx}>{material.driveFile?.title || material.link?.title || 'Attachment'}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <Button variant="outline" size="sm" className="ml-4">
-                      View Thread
-                    </Button>
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground mt-3 pt-3 border-t">
+                      {announcement.profiles && (
+                        <>
+                          <span>By {announcement.profiles.full_name || announcement.profiles.email || 'Unknown'}</span>
+                          <span>•</span>
+                        </>
+                      )}
+                      {announcement.google_classroom_update_time && (
+                        <>
+                          <span>Updated: {new Date(announcement.google_classroom_update_time).toLocaleDateString()}</span>
+                          <span>•</span>
+                        </>
+                      )}
+                      {announcement.google_classroom_alternate_link && (
+                        <a
+                          href={announcement.google_classroom_alternate_link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline"
+                        >
+                          View in Google Classroom
+                        </a>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

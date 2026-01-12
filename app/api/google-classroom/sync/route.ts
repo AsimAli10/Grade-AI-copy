@@ -10,6 +10,7 @@ import {
   fetchCourseStudents,
   fetchCoursework,
   fetchStudentSubmissions,
+  fetchAnnouncements,
   getClassroomClient,
 } from "@/utils/google-classroom";
 
@@ -209,13 +210,13 @@ export async function POST(request: NextRequest) {
 
     // Create admin client with service role key
     // The service role key is passed as the second parameter and Supabase automatically uses it for admin operations
-    const adminClient = createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: {
-        persistSession: false,
+      const adminClient = createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: {
+          persistSession: false,
         autoRefreshToken: false,
-      },
-    });
-    
+        },
+      });
+
     // Verify admin client works by testing it
     try {
       const { data: testUsers, error: testError } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1 });
@@ -235,18 +236,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Safety check: Verify this Google Classroom isn't connected to another user
-    const { data: otherIntegration } = await adminClient
-      .from("google_classroom_integrations")
-      .select("user_id")
-      .eq("google_classroom_id", integration.google_classroom_id)
-      .neq("user_id", session.user.id)
-      .maybeSingle();
+      const { data: otherIntegration } = await adminClient
+        .from("google_classroom_integrations")
+        .select("user_id")
+        .eq("google_classroom_id", integration.google_classroom_id)
+        .neq("user_id", session.user.id)
+        .maybeSingle();
 
-    if (otherIntegration) {
-      return NextResponse.json(
-        { error: "This Google Classroom account is already connected. Please disconnect the existing connection first." },
-        { status: 403 }
-      );
+      if (otherIntegration) {
+        return NextResponse.json(
+          { error: "This Google Classroom account is already connected. Please disconnect the existing connection first." },
+          { status: 403 }
+        );
     }
 
     // Check if token is expired and refresh if needed
@@ -301,6 +302,7 @@ export async function POST(request: NextRequest) {
     let studentsSynced = 0;
     let submissionsSynced = 0;
     let assignmentsSynced = 0;
+    let announcementsSynced = 0;
 
     // Sync each course
     for (const googleCourse of googleCourses) {
@@ -364,25 +366,25 @@ export async function POST(request: NextRequest) {
         }
 
         // Fetch and sync students for both new and existing courses
-        try {
-          const students = await fetchCourseStudents(oauth2Client, googleCourse.id);
-          
+          try {
+            const students = await fetchCourseStudents(oauth2Client, googleCourse.id);
+            
           let courseStudentsSynced = 0;
-          for (const student of students) {
-            if (!student.profile?.id) continue;
+            for (const student of students) {
+              if (!student.profile?.id) continue;
 
             // Find or create student profile using admin client to bypass RLS
             const { data: studentProfile } = await adminClient
               .from("profiles")
-              .select("id")
-              .eq("google_classroom_id", student.profile.id)
-              .maybeSingle();
+                .select("id")
+                .eq("google_classroom_id", student.profile.id)
+                .maybeSingle();
 
-            let studentId: string;
+              let studentId: string;
 
-            if (studentProfile) {
+              if (studentProfile) {
               studentId = studentProfile.id;
-            } else {
+              } else {
               // Find or create auth user (handles case where email matches existing account)
               const studentEmail = student.profile.emailAddress || `student_${student.profile.id}@classroom.local`;
               const authUserId = await findOrCreateStudentAuthUser(
@@ -402,9 +404,9 @@ export async function POST(request: NextRequest) {
                 .from("profiles")
                 .update({
                   full_name: fullName,
-                  google_classroom_id: student.profile.id,
-                  google_email: student.profile.emailAddress || null,
-                })
+                    google_classroom_id: student.profile.id,
+                    google_email: student.profile.emailAddress || null,
+                  })
                 .eq("id", authUserId);
 
               if (updateError) {
@@ -419,17 +421,17 @@ export async function POST(request: NextRequest) {
             // Type assertion needed because course_enrollments table is not in generated types
             const { error: enrollmentError } = await ((adminClient as any)
               .from("course_enrollments"))
-              .upsert(
-                {
-                  course_id: courseId,
-                  student_id: studentId,
-                  google_classroom_user_id: student.profile.id,
-                  enrollment_status: "active",
-                },
-                {
-                  onConflict: "course_id,student_id",
-                }
-              );
+                .upsert(
+                  {
+                    course_id: courseId,
+                    student_id: studentId,
+                    google_classroom_user_id: student.profile.id,
+                    enrollment_status: "active",
+                  },
+                  {
+                    onConflict: "course_id,student_id",
+                  }
+                );
 
               if (enrollmentError) {
                 console.error(`[SYNC ERROR] Error creating enrollment for student ${studentId} in course ${courseId}:`, enrollmentError);
@@ -441,26 +443,30 @@ export async function POST(request: NextRequest) {
           studentsSynced += courseStudentsSynced;
 
           // Update student count (trigger should handle this, but ensure it's updated)
-          const { count } = await (supabase
-            .from("course_enrollments") as any)
-            .select("*", { count: "exact", head: true })
+            const { count } = await (supabase
+              .from("course_enrollments") as any)
+              .select("*", { count: "exact", head: true })
             .eq("course_id", courseId)
             .eq("enrollment_status", "active");
 
-          await (supabase
-            .from("courses") as any)
-            .update({ student_count: count || 0 })
-            .eq("id", courseId);
-        } catch (studentError) {
+            await (supabase
+              .from("courses") as any)
+              .update({ student_count: count || 0 })
+              .eq("id", courseId);
+          } catch (studentError) {
           console.error("[SYNC ERROR] Error syncing students:", studentError);
         }
 
         // Fetch and sync coursework (assignments) for both new and existing courses
+        // Only sync ASSIGNMENT type, exclude quizzes (SHORT_ANSWER_QUESTION, MULTIPLE_CHOICE_QUESTION, etc.)
         try {
           const coursework = await fetchCoursework(oauth2Client, googleCourse.id);
           
+          // Filter to only include ASSIGNMENT type coursework (exclude quizzes)
+          const assignmentsOnly = coursework.filter((work: any) => work.workType === "ASSIGNMENT");
+          
           let courseAssignmentsSynced = 0;
-          for (const work of coursework) {
+          for (const work of assignmentsOnly) {
             if (!work.id) continue;
 
             // First check if assignment exists
@@ -528,6 +534,17 @@ export async function POST(request: NextRequest) {
                 let assignmentSubmissionsSynced = 0;
                 for (const googleSubmission of googleSubmissions) {
                   if (!googleSubmission.id || !googleSubmission.userId) continue;
+                  
+                  // Only sync submissions that are actually turned in or have content
+                  // Skip NEW/CREATED submissions that have no content (common for quizzes)
+                  const isTurnedIn = googleSubmission.state === "TURNED_IN" || googleSubmission.state === "RETURNED";
+                  const hasContent = googleSubmission.assignmentSubmission?.attachments && 
+                                    googleSubmission.assignmentSubmission.attachments.length > 0;
+                  
+                  // Skip if not turned in and has no content
+                  if (!isTurnedIn && !hasContent) {
+                    continue;
+                  }
 
                   // Find student by Google Classroom ID using admin client
                   let { data: studentProfile } = await adminClient
@@ -735,6 +752,128 @@ export async function POST(request: NextRequest) {
           console.error("[SYNC ERROR] Error syncing coursework:", courseworkError);
         }
 
+        // Fetch and sync announcements for this course
+        // Store them as forum_messages in the course's forum
+        try {
+          console.log(`[SYNC] Fetching announcements for course ${googleCourse.name} (${googleCourse.id})`);
+          const announcements = await fetchAnnouncements(oauth2Client, googleCourse.id);
+          console.log(`[SYNC] Found ${announcements.length} announcements for course ${googleCourse.name}`);
+          
+          // Always find or create a forum for this course (even if no announcements yet)
+          let { data: courseForum } = await ((adminClient as any)
+            .from("forums"))
+            .select("id")
+            .eq("course_id", courseId)
+            .maybeSingle();
+
+          if (!courseForum) {
+            console.log(`[SYNC] Creating forum for course ${googleCourse.name}`);
+            // Create a forum for this course
+            const { data: newForum, error: forumError } = await ((adminClient as any)
+              .from("forums"))
+              .insert({
+                course_id: courseId,
+                name: `${googleCourse.name} - Announcements`,
+                description: "Google Classroom announcements and course updates",
+                is_public: true,
+                created_by: session.user.id,
+              })
+              .select()
+              .single();
+
+            if (forumError || !newForum) {
+              console.error(`[SYNC ERROR] Error creating forum for course ${courseId}:`, forumError);
+              throw forumError;
+            }
+            courseForum = newForum;
+            console.log(`[SYNC] ✓ Created forum ${newForum.id} for course ${googleCourse.name}`);
+          } else {
+            console.log(`[SYNC] ✓ Found existing forum ${courseForum.id} for course ${googleCourse.name}`);
+          }
+
+          if (announcements.length > 0) {
+            let courseAnnouncementsSynced = 0;
+            for (const announcement of announcements) {
+              if (!announcement.id) {
+                console.warn(`[SYNC] Skipping announcement without ID:`, announcement);
+                continue;
+              }
+
+              console.log(`[SYNC] Processing announcement ${announcement.id}:`, {
+                text: announcement.text?.substring(0, 50) + '...',
+                state: announcement.state,
+                creationTime: announcement.creationTime,
+              });
+
+              // Find the author profile (teacher who created the announcement)
+              // If creatorUserId is not available, use the current teacher
+              let authorId = session.user.id;
+              
+              if (announcement.creatorUserId) {
+                const { data: creatorProfile } = await adminClient
+                  .from("profiles")
+                  .select("id")
+                  .eq("google_classroom_id", announcement.creatorUserId)
+                  .maybeSingle();
+                
+                if (creatorProfile) {
+                  authorId = creatorProfile.id;
+                }
+              }
+
+              // Upsert announcement as forum message using admin client to bypass RLS
+              const { error: messageError } = await ((adminClient as any)
+                .from("forum_messages"))
+                .upsert(
+                  {
+                    forum_id: (courseForum as any).id,
+                    author_id: authorId,
+                    content: announcement.text || "Announcement",
+                    is_pinned: false, // Can be enhanced to check if announcement is pinned in GC
+                    google_classroom_announcement_id: announcement.id,
+                    google_classroom_alternate_link: announcement.alternateLink || null,
+                    google_classroom_materials: announcement.materials || null,
+                    google_classroom_state: announcement.state || 'PUBLISHED',
+                    google_classroom_creation_time: announcement.creationTime 
+                      ? new Date(announcement.creationTime).toISOString() 
+                      : null,
+                    google_classroom_update_time: announcement.updateTime 
+                      ? new Date(announcement.updateTime).toISOString() 
+                      : null,
+                    created_at: announcement.creationTime 
+                      ? new Date(announcement.creationTime).toISOString() 
+                      : new Date().toISOString(),
+                    updated_at: announcement.updateTime 
+                      ? new Date(announcement.updateTime).toISOString() 
+                      : new Date().toISOString(),
+                  },
+                  {
+                    onConflict: "google_classroom_announcement_id",
+                  }
+                );
+
+              if (messageError) {
+                console.error(`[SYNC ERROR] Error upserting announcement ${announcement.id}:`, messageError);
+              } else {
+                courseAnnouncementsSynced++;
+                console.log(`[SYNC] ✓ Synced announcement ${announcement.id}`);
+              }
+            }
+            
+            announcementsSynced += courseAnnouncementsSynced;
+            console.log(`[SYNC] ✓ Synced ${courseAnnouncementsSynced} announcements for course ${googleCourse.name}`);
+          } else {
+            console.log(`[SYNC] No announcements found for course ${googleCourse.name}, but forum is ready`);
+          }
+        } catch (announcementsError: any) {
+          console.error("[SYNC ERROR] Error syncing announcements:", announcementsError);
+          console.error("[SYNC ERROR] Error details:", {
+            message: announcementsError?.message,
+            stack: announcementsError?.stack,
+            response: announcementsError?.response?.data,
+          });
+        }
+
         syncedCount++;
       } catch (courseError) {
         console.error("Error syncing course:", courseError);
@@ -791,6 +930,7 @@ export async function POST(request: NextRequest) {
       studentsSynced,
       assignmentsSynced,
       submissionsSynced,
+      announcementsSynced,
     });
   } catch (error: any) {
     console.error("Error syncing Google Classroom:", error);
