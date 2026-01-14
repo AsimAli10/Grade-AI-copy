@@ -51,8 +51,9 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
         .maybeSingle();
 
       if (!profileError && profileData) {
-        setUserRole(profileData.role);
-        console.log("User role:", profileData.role);
+        const profileTyped = profileData as any;
+        setUserRole(profileTyped.role);
+        console.log("User role:", profileTyped.role);
       } else {
         console.error("Error fetching user role:", profileError);
         // Default to teacher if profile fetch fails (for backwards compatibility)
@@ -125,12 +126,13 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
 
       if (!gradeError && gradeData) {
         setGrade(gradeData);
+        const gradeDataTyped = gradeData as any;
         setEditingGrade({
-          overall_score: gradeData.overall_score,
-          max_score: gradeData.max_score,
-          criterion_scores: { ...gradeData.criterion_scores },
+          overall_score: gradeDataTyped.overall_score,
+          max_score: gradeDataTyped.max_score,
+          criterion_scores: { ...gradeDataTyped.criterion_scores },
         });
-        setTeacherNotes(gradeData.teacher_notes || "");
+        setTeacherNotes(gradeDataTyped.teacher_notes || "");
         
         // Fetch grade history
         const { data: historyData, error: historyError } = await supabase
@@ -143,7 +145,7 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
               email
             )
           `)
-          .eq("grade_id", gradeData.id)
+          .eq("grade_id", gradeDataTyped.id)
           .order("created_at", { ascending: false });
         
         if (!historyError && historyData) {
@@ -551,9 +553,9 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
                           // Calculate from criterion scores if overall is 0 or empty
                           if (!editingGrade?.overall_score || editingGrade.overall_score === 0) {
                             const criterionScores = editingGrade?.criterion_scores || {};
-                            const calculated = Object.values(criterionScores).reduce((sum: number, score: any) => {
+                            const calculated: number = Object.values(criterionScores).reduce((sum: number, score: any) => {
                               return sum + (parseFloat(score) || 0);
-                            }, 0);
+                            }, 0) as number;
                             if (calculated > 0) {
                               setEditingGrade({
                                 ...editingGrade,

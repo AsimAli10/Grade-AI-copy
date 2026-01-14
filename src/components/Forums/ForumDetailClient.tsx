@@ -203,7 +203,7 @@ export default function ForumDetailClient({ forumId }: ForumDetailClientProps) {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <h3 className="text-xl font-semibold mb-2">Forum not found</h3>
-            <p className="text-muted-foreground">The forum you're looking for doesn't exist.</p>
+            <p className="text-muted-foreground">The forum you&apos;re looking for doesn&apos;t exist.</p>
             <Button variant="outline" className="mt-4" asChild>
               <Link href="/forums">Back to Forums</Link>
             </Button>

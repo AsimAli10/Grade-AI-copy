@@ -360,7 +360,7 @@ export default function RubricEditor({ open, onOpenChange, rubric, onSuccess }: 
 
                 {criteria.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
-                    <p>No criteria added yet. Click "Add Criterion" to get started.</p>
+                    <p>No criteria added yet. Click &quot;Add Criterion&quot; to get started.</p>
                   </div>
                 ) : (
                   <div className="space-y-4">

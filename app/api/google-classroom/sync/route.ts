@@ -1277,15 +1277,20 @@ export async function POST(request: NextRequest) {
                   console.log(`[SYNC] Announcement created by current teacher (${session.user.id})`);
                 } else {
                   // Try to find the creator profile by google_classroom_id
-                  const { data: creatorProfile } = await adminClient
+                  const { data: creatorProfile, error: creatorError } = await adminClient
                     .from("profiles")
                     .select("id, full_name, email")
                     .eq("google_classroom_id", announcement.creatorUserId)
                     .maybeSingle();
                   
-                  if (creatorProfile) {
-                    authorId = creatorProfile.id;
-                    console.log(`[SYNC] Found creator profile: ${creatorProfile.full_name || creatorProfile.email}`);
+                  if (creatorError) {
+                    console.error(`[SYNC] Error finding creator profile:`, creatorError);
+                    // Use current teacher as fallback
+                    authorId = session.user.id;
+                  } else if (creatorProfile) {
+                    authorId = (creatorProfile as any).id;
+                    const creatorName = (creatorProfile as any).full_name || (creatorProfile as any).email;
+                    console.log(`[SYNC] Found creator profile: ${creatorName}`);
                   } else {
                     // Creator not found, use current teacher as fallback
                     // This ensures we always have a valid author with a name
@@ -1299,22 +1304,27 @@ export async function POST(request: NextRequest) {
               }
               
               // Ensure the author profile has full_name set (use email if name is missing)
-              const { data: authorProfile } = await adminClient
+              const { data: authorProfile, error: authorError } = await adminClient
                 .from("profiles")
                 .select("id, full_name, email")
                 .eq("id", authorId)
                 .maybeSingle();
               
-              if (authorProfile && !authorProfile.full_name && authorProfile.email) {
-                // Try to extract name from email or set a default
-                const emailName = authorProfile.email.split("@")[0];
-                await adminClient
-                  .from("profiles")
-                  .update({
-                    full_name: emailName.charAt(0).toUpperCase() + emailName.slice(1),
-                  })
-                  .eq("id", authorId);
-                console.log(`[SYNC] Updated author profile with name from email: ${emailName}`);
+              if (authorError) {
+                console.error(`[SYNC] Error fetching author profile:`, authorError);
+              } else if (authorProfile) {
+                const authorProfileTyped = authorProfile as any;
+                if (!authorProfileTyped.full_name && authorProfileTyped.email) {
+                  // Try to extract name from email or set a default
+                  const emailName = authorProfileTyped.email.split("@")[0];
+                  await (adminClient
+                    .from("profiles") as any)
+                    .update({
+                      full_name: emailName.charAt(0).toUpperCase() + emailName.slice(1),
+                    })
+                    .eq("id", authorId);
+                  console.log(`[SYNC] Updated author profile with name from email: ${emailName}`);
+                }
               }
 
               // Upsert announcement as forum message using admin client to bypass RLS

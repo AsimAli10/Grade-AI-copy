@@ -444,8 +444,8 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
           // If we created a new rubric (not editing), link it to the assignment
           if (!currentRubric && rubricId) {
             // Link the new rubric to the assignment
-            const { error: updateError } = await supabase
-              .from("assignments")
+            const { error: updateError } = await (supabase
+              .from("assignments") as any)
               .update({ rubric_id: rubricId })
               .eq("id", assignmentId);
 
