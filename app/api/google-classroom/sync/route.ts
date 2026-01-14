@@ -176,6 +176,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Ensure teacher's profile has google_classroom_id set (for announcement author matching)
+    const { data: teacherProfile } = await (supabase
+      .from("profiles") as any)
+      .select("id, google_classroom_id, full_name")
+      .eq("id", session.user.id)
+      .maybeSingle();
+
+    if (teacherProfile && !teacherProfile.google_classroom_id) {
+      // Update teacher profile with google_classroom_id if missing
+      await (supabase
+        .from("profiles") as any)
+        .update({
+          google_classroom_id: integration.google_classroom_id,
+        })
+        .eq("id", session.user.id);
+    }
+
     // Create admin client to bypass RLS for student profile creation
     const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -1253,15 +1270,51 @@ export async function POST(request: NextRequest) {
               let authorId = session.user.id;
               
               if (announcement.creatorUserId) {
-                const { data: creatorProfile } = await adminClient
-                  .from("profiles")
-                  .select("id")
-                  .eq("google_classroom_id", announcement.creatorUserId)
-                  .maybeSingle();
-                
-                if (creatorProfile) {
-                  authorId = creatorProfile.id;
+                // First check if creatorUserId matches the current teacher's Google Classroom ID
+                if (announcement.creatorUserId === integration.google_classroom_id) {
+                  // This announcement was created by the current teacher
+                  authorId = session.user.id;
+                  console.log(`[SYNC] Announcement created by current teacher (${session.user.id})`);
+                } else {
+                  // Try to find the creator profile by google_classroom_id
+                  const { data: creatorProfile } = await adminClient
+                    .from("profiles")
+                    .select("id, full_name, email")
+                    .eq("google_classroom_id", announcement.creatorUserId)
+                    .maybeSingle();
+                  
+                  if (creatorProfile) {
+                    authorId = creatorProfile.id;
+                    console.log(`[SYNC] Found creator profile: ${creatorProfile.full_name || creatorProfile.email}`);
+                  } else {
+                    // Creator not found, use current teacher as fallback
+                    // This ensures we always have a valid author with a name
+                    authorId = session.user.id;
+                    console.log(`[SYNC] Creator ${announcement.creatorUserId} not found, using current teacher ${session.user.id} as author`);
+                  }
                 }
+              } else {
+                // No creatorUserId, use current teacher
+                console.log(`[SYNC] No creatorUserId in announcement, using current teacher ${session.user.id}`);
+              }
+              
+              // Ensure the author profile has full_name set (use email if name is missing)
+              const { data: authorProfile } = await adminClient
+                .from("profiles")
+                .select("id, full_name, email")
+                .eq("id", authorId)
+                .maybeSingle();
+              
+              if (authorProfile && !authorProfile.full_name && authorProfile.email) {
+                // Try to extract name from email or set a default
+                const emailName = authorProfile.email.split("@")[0];
+                await adminClient
+                  .from("profiles")
+                  .update({
+                    full_name: emailName.charAt(0).toUpperCase() + emailName.slice(1),
+                  })
+                  .eq("id", authorId);
+                console.log(`[SYNC] Updated author profile with name from email: ${emailName}`);
               }
 
               // Upsert announcement as forum message using admin client to bypass RLS
