@@ -10,6 +10,8 @@ import { FileText, Download, RefreshCw, Edit, Link as LinkIcon, Youtube, File, E
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
+import RubricEditor from "@/components/Rubrics/RubricEditor";
+import type { Rubric } from "@/models/index";
 
 type AssignmentDetailClientProps = {
   assignmentId: string;
@@ -21,6 +23,8 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
   const [assignment, setAssignment] = useState<any>(null);
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [rubricEditorOpen, setRubricEditorOpen] = useState(false);
+  const [currentRubric, setCurrentRubric] = useState<Rubric | null>(null);
 
   useEffect(() => {
     fetchAssignmentData();
@@ -197,10 +201,29 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
             <p className="text-muted-foreground mt-1">Course: {course.name || "Unknown Course"}</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
-              <Edit className="h-4 w-4 mr-2" />
-              Edit Rubric
-            </Button>
+            {assignment.rubrics ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCurrentRubric(assignment.rubrics);
+                  setRubricEditorOpen(true);
+                }}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Rubric
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCurrentRubric(null);
+                  setRubricEditorOpen(true);
+                }}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Add Rubric
+              </Button>
+            )}
             <Button variant="outline">
               <RefreshCw className="h-4 w-4 mr-2" />
               Bulk Regrade
@@ -392,7 +415,14 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
               ) : (
                 <div className="text-center py-8">
                   <p className="text-muted-foreground text-sm mb-4">No rubric assigned to this assignment</p>
-                  <Button variant="outline" className="w-full">
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      setCurrentRubric(null);
+                      setRubricEditorOpen(true);
+                    }}
+                  >
                     <Edit className="h-4 w-4 mr-2" />
                     Add Rubric
                   </Button>
@@ -402,6 +432,41 @@ export default function AssignmentDetailClient({ assignmentId }: AssignmentDetai
           </Card>
         </div>
       </div>
+
+      <RubricEditor
+        open={rubricEditorOpen}
+        onOpenChange={setRubricEditorOpen}
+        rubric={currentRubric}
+        onSuccess={async (rubricId) => {
+          // After creating/editing a rubric, refresh the assignment data
+          await fetchAssignmentData();
+          
+          // If we created a new rubric (not editing), link it to the assignment
+          if (!currentRubric && rubricId) {
+            // Link the new rubric to the assignment
+            const { error: updateError } = await supabase
+              .from("assignments")
+              .update({ rubric_id: rubricId })
+              .eq("id", assignmentId);
+
+            if (updateError) {
+              console.error("Error linking rubric to assignment:", updateError);
+              toast({
+                title: "Warning",
+                description: "Rubric created but failed to link to assignment. Please link it manually.",
+                variant: "destructive",
+              });
+            } else {
+              toast({
+                title: "Success",
+                description: "Rubric created and linked to assignment",
+              });
+              // Refresh again to show the linked rubric
+              await fetchAssignmentData();
+            }
+          }
+        }}
+      />
     </div>
   );
 }

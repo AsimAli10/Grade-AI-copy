@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle2, Edit, MessageSquare, Flag, History, ExternalLink, FileText } from "lucide-react";
+import { CheckCircle2, Edit, MessageSquare, Flag, History, ExternalLink, FileText, Save, X, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -23,6 +26,12 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
   const [assignment, setAssignment] = useState<any>(null);
   const [grade, setGrade] = useState<any>(null);
   const [rubric, setRubric] = useState<any>(null);
+  const [gradeHistory, setGradeHistory] = useState<any[]>([]);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingGrade, setEditingGrade] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const [teacherNotes, setTeacherNotes] = useState("");
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   const fetchSubmissionData = useCallback(async () => {
     try {
@@ -32,6 +41,22 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
       if (!session?.user) {
         router.push("/auth");
         return;
+      }
+
+      // Fetch user profile to get role
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", session.user.id)
+        .maybeSingle();
+
+      if (!profileError && profileData) {
+        setUserRole(profileData.role);
+        console.log("User role:", profileData.role);
+      } else {
+        console.error("Error fetching user role:", profileError);
+        // Default to teacher if profile fetch fails (for backwards compatibility)
+        setUserRole("teacher");
       }
 
       // Fetch submission with all related data including rubric
@@ -100,6 +125,30 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
 
       if (!gradeError && gradeData) {
         setGrade(gradeData);
+        setEditingGrade({
+          overall_score: gradeData.overall_score,
+          max_score: gradeData.max_score,
+          criterion_scores: { ...gradeData.criterion_scores },
+        });
+        setTeacherNotes(gradeData.teacher_notes || "");
+        
+        // Fetch grade history
+        const { data: historyData, error: historyError } = await supabase
+          .from("grade_history")
+          .select(`
+            *,
+            changed_by_profile:changed_by (
+              id,
+              full_name,
+              email
+            )
+          `)
+          .eq("grade_id", gradeData.id)
+          .order("created_at", { ascending: false });
+        
+        if (!historyError && historyData) {
+          setGradeHistory(historyData);
+        }
       }
     } catch (error) {
       console.error("Error fetching submission data:", error);
@@ -116,6 +165,176 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
   useEffect(() => {
     fetchSubmissionData();
   }, [fetchSubmissionData]);
+
+  const handleSaveGrade = async () => {
+    if (!editingGrade) return;
+
+    setSaving(true);
+    try {
+      // Calculate overall score from criterion scores if not manually set
+      let overallScore = editingGrade.overall_score;
+      
+      // If overall score is 0 or not set, calculate from criterion scores
+      if (overallScore === 0 || !overallScore) {
+        const criterionScores = editingGrade.criterion_scores || {};
+        overallScore = Object.values(criterionScores).reduce((sum: number, score: any) => {
+          return sum + (parseFloat(score) || 0);
+        }, 0);
+      }
+
+      // If grade doesn't exist, create it first
+      if (!grade) {
+        const response = await fetch("/api/grades", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            submission_id: submissionId,
+            overall_score: overallScore,
+            max_score: editingGrade.max_score,
+            criterion_scores: editingGrade.criterion_scores,
+            teacher_notes: teacherNotes,
+            grade_status: "teacher_reviewed",
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to create grade");
+        }
+
+        toast({
+          title: "Success",
+          description: "Grade created successfully",
+        });
+
+        setIsEditing(false);
+        // Refresh grade data
+        await fetchSubmissionData();
+      } else {
+        // Update existing grade
+        const response = await fetch(`/api/grades/${grade.id}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            overall_score: overallScore,
+            max_score: editingGrade.max_score,
+            criterion_scores: editingGrade.criterion_scores,
+            teacher_notes: teacherNotes,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to update grade");
+        }
+
+        toast({
+          title: "Success",
+          description: "Grade updated successfully",
+        });
+
+        setIsEditing(false);
+        // Refresh grade data
+        await fetchSubmissionData();
+      }
+    } catch (error: any) {
+      console.error("Error saving grade:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save grade",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAcceptGrade = async () => {
+    if (!grade) return;
+
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/grades/${grade.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          grade_status: "accepted",
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to accept grade");
+      }
+
+      toast({
+        title: "Success",
+        description: "Grade accepted",
+      });
+
+      // Refresh grade data
+      await fetchSubmissionData();
+    } catch (error: any) {
+      console.error("Error accepting grade:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to accept grade",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleFlagForReview = async () => {
+    if (!grade) return;
+
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/grades/${grade.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          flagged_for_review: !grade.flagged_for_review,
+          flag_reason: grade.ai_confidence === "low" ? "Low AI confidence" : null,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update flag status");
+      }
+
+      toast({
+        title: "Success",
+        description: grade.flagged_for_review ? "Grade unflagged" : "Grade flagged for review",
+      });
+
+      // Refresh grade data
+      await fetchSubmissionData();
+    } catch (error: any) {
+      console.error("Error flagging grade:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update flag status",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -307,26 +526,104 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Overall Grade */}
-            {grade ? (
-              <div className="border rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
+            {(grade || isEditing) ? (
+              <div className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
                   <span className="font-semibold">Overall Grade</span>
-                  <Badge variant="default">
-                    {grade.overall_score}/{grade.max_score || assignment?.max_points || 100}
-                  </Badge>
+                  {(isEditing && (userRole === "teacher" || userRole === "admin")) ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        className="w-20 h-8"
+                        value={editingGrade?.overall_score || ""}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          // Allow empty string for clearing, or parse the number
+                          const numValue = value === "" ? 0 : parseFloat(value);
+                          if (!isNaN(numValue)) {
+                            setEditingGrade({
+                              ...editingGrade,
+                              overall_score: numValue,
+                            });
+                          }
+                        }}
+                        onBlur={(e) => {
+                          // Calculate from criterion scores if overall is 0 or empty
+                          if (!editingGrade?.overall_score || editingGrade.overall_score === 0) {
+                            const criterionScores = editingGrade?.criterion_scores || {};
+                            const calculated = Object.values(criterionScores).reduce((sum: number, score: any) => {
+                              return sum + (parseFloat(score) || 0);
+                            }, 0);
+                            if (calculated > 0) {
+                              setEditingGrade({
+                                ...editingGrade,
+                                overall_score: calculated,
+                              });
+                            }
+                          }
+                        }}
+                        min="0"
+                        step="0.1"
+                        placeholder="0"
+                      />
+                      <span>/</span>
+                      <Input
+                        type="number"
+                        className="w-20 h-8"
+                        value={editingGrade?.max_score || assignment?.max_points || 100}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          const numValue = value === "" ? 100 : parseFloat(value);
+                          if (!isNaN(numValue) && numValue > 0) {
+                            setEditingGrade({
+                              ...editingGrade,
+                              max_score: numValue,
+                            });
+                          }
+                        }}
+                        min="1"
+                        step="0.1"
+                      />
+                    </div>
+                  ) : (
+                    <Badge variant="default">
+                      {grade?.overall_score || 0}/{grade?.max_score || assignment?.max_points || 100}
+                    </Badge>
+                  )}
                 </div>
-                {grade.ai_confidence && (
+                {grade?.ai_confidence && (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Confidence:</span>
+                    <span className="text-sm text-muted-foreground">AI Confidence:</span>
                     <Badge variant={grade.ai_confidence === "high" ? "default" : grade.ai_confidence === "medium" ? "secondary" : "outline"}>
                       {grade.ai_confidence === "high" ? "High" : grade.ai_confidence === "medium" ? "Medium" : "Low"}
                     </Badge>
+                    {grade.ai_confidence === "low" && (userRole === "teacher" || userRole === "admin") && !isEditing && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleFlagForReview()}
+                        className="ml-2"
+                      >
+                        <Flag className="h-3 w-3 mr-1" />
+                        Flag
+                      </Button>
+                    )}
                   </div>
                 )}
-                {grade.feedback && (
-                  <div className="mt-3 pt-3 border-t">
-                    <p className="text-sm text-muted-foreground mb-1">Feedback:</p>
-                    <p className="text-sm">{grade.feedback}</p>
+                {grade?.flagged_for_review && (
+                  <div className="flex items-center gap-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
+                    <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                    <span className="text-sm text-yellow-800 dark:text-yellow-200">
+                      Flagged for review{grade.flag_reason && `: ${grade.flag_reason}`}
+                    </span>
+                  </div>
+                )}
+                {grade?.grade_status && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Status:</span>
+                    <Badge variant="outline">
+                      {grade.grade_status.replace("_", " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                    </Badge>
                   </div>
                 )}
               </div>
@@ -362,9 +659,45 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
                               <p className="text-xs text-muted-foreground mt-1">{criterion.description}</p>
                             )}
                           </div>
-                          <Badge variant={criterionScore !== null ? "default" : "outline"}>
-                            {criterionScore !== null ? `${criterionScore}/${maxPoints}` : `—/${maxPoints}`}
-                          </Badge>
+                          {(isEditing && (userRole === "teacher" || userRole === "admin")) ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="number"
+                                className="w-20 h-8"
+                                value={editingGrade?.criterion_scores?.[criterion.name] || editingGrade?.criterion_scores?.[idx] || ""}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  const numValue = value === "" ? 0 : parseFloat(value);
+                                  if (!isNaN(numValue)) {
+                                    const newScores = { ...(editingGrade?.criterion_scores || {}) };
+                                    newScores[criterion.name] = numValue;
+                                    setEditingGrade({
+                                      ...editingGrade,
+                                      criterion_scores: newScores,
+                                    });
+                                    
+                                    // Auto-calculate overall score
+                                    const calculated = Object.values(newScores).reduce((sum: number, score: any) => {
+                                      return sum + (parseFloat(score) || 0);
+                                    }, 0);
+                                    setEditingGrade((prev: any) => ({
+                                      ...prev,
+                                      overall_score: calculated,
+                                    }));
+                                  }
+                                }}
+                                min="0"
+                                max={maxPoints}
+                                step="0.1"
+                                placeholder="0"
+                              />
+                              <span className="text-sm">/{maxPoints}</span>
+                            </div>
+                          ) : (
+                            <Badge variant={criterionScore !== null ? "default" : "outline"}>
+                              {criterionScore !== null ? `${criterionScore}/${maxPoints}` : `—/${maxPoints}`}
+                            </Badge>
+                          )}
                         </div>
                         
                         {/* Show levels if available */}
@@ -424,58 +757,190 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="flex flex-col gap-2 pt-4 border-t">
-              {grade ? (
-                <>
-                  <Button className="w-full" disabled>
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    Accept AI Grade
-                  </Button>
-                  <Button variant="outline" className="w-full" disabled>
-                    <Edit className="h-4 w-4 mr-2" />
-                    Edit Scores
-                  </Button>
-                  <Button variant="outline" className="w-full" disabled>
-                    <MessageSquare className="h-4 w-4 mr-2" />
-                    Comment to Student
-                  </Button>
-                  <Button variant="outline" className="w-full" disabled>
-                    <Flag className="h-4 w-4 mr-2" />
-                    Flag for Regrade
-                  </Button>
-                  <p className="text-xs text-muted-foreground text-center mt-2">
-                    Grading actions coming soon
-                  </p>
-                </>
-              ) : (
-                <div className="text-center py-4">
-                  <p className="text-sm text-muted-foreground mb-3">
-                    No grade assigned yet. AI grading will be available soon.
-                  </p>
-                  <Button variant="outline" className="w-full" disabled>
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    Grade with AI (Coming Soon)
-                  </Button>
+            {/* Teacher Notes - Show when editing or when grade exists */}
+            {(isEditing || grade) && (userRole === "teacher" || userRole === "admin") && (
+              <div className="space-y-2 pt-4 border-t">
+                <Label htmlFor="teacher-notes">Teacher Notes / Feedback</Label>
+                <Textarea
+                  id="teacher-notes"
+                  value={teacherNotes}
+                  onChange={(e) => setTeacherNotes(e.target.value)}
+                  placeholder="Add your feedback or notes for this submission..."
+                  rows={3}
+                  disabled={!isEditing}
+                />
+              </div>
+            )}
+            
+            {/* Student View - Show teacher notes if available */}
+            {grade && userRole === "student" && grade.teacher_notes && (
+              <div className="space-y-2 pt-4 border-t">
+                <Label>Teacher Feedback</Label>
+                <div className="p-3 bg-muted rounded-md">
+                  <p className="text-sm">{grade.teacher_notes}</p>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+
+            {/* Action Buttons - Only show to teachers/admins */}
+            {(userRole === "teacher" || userRole === "admin") && (
+              <div className="flex flex-col gap-2 pt-4 border-t">
+                {isEditing ? (
+                  <>
+                    <Button
+                      className="w-full"
+                      onClick={handleSaveGrade}
+                      disabled={saving}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      {saving ? "Saving..." : grade ? "Save Changes" : "Save Grade"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setIsEditing(false);
+                        if (grade) {
+                          setEditingGrade({
+                            overall_score: grade.overall_score,
+                            max_score: grade.max_score,
+                            criterion_scores: { ...grade.criterion_scores },
+                          });
+                          setTeacherNotes(grade.teacher_notes || "");
+                        } else {
+                          setEditingGrade(null);
+                          setTeacherNotes("");
+                        }
+                      }}
+                      disabled={saving}
+                    >
+                      <X className="h-4 w-4 mr-2" />
+                      Cancel
+                    </Button>
+                  </>
+                ) : grade ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => setIsEditing(true)}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Edit Scores
+                    </Button>
+                    {/* Accept AI Grade button - disabled until AI grading is implemented */}
+                    {grade.grade_status === "ai_graded" && (
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        disabled
+                        title="AI grading coming soon"
+                      >
+                        <CheckCircle2 className="h-4 w-4 mr-2" />
+                        Accept AI Grade (Coming Soon)
+                      </Button>
+                    )}
+                    {grade.ai_confidence === "low" && (
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => handleFlagForReview()}
+                      >
+                        <Flag className="h-4 w-4 mr-2" />
+                        {grade.flagged_for_review ? "Unflag" : "Flag for Review"}
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <div className="space-y-3">
+                    <Button 
+                      className="w-full"
+                      onClick={() => {
+                        // Initialize a new grade for manual grading
+                        const maxPoints = assignment?.max_points || 100;
+                        const initialCriterionScores: Record<string, number> = {};
+                        if (rubric?.criteria) {
+                          rubric.criteria.forEach((criterion: any, idx: number) => {
+                            initialCriterionScores[criterion.name || idx] = 0;
+                          });
+                        }
+                        setEditingGrade({
+                          overall_score: 0,
+                          max_score: maxPoints,
+                          criterion_scores: initialCriterionScores,
+                        });
+                        setIsEditing(true);
+                      }}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Grade Manually
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      disabled
+                      title="AI grading coming soon"
+                    >
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Grade with AI (Coming Soon)
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+            
           </CardContent>
         </Card>
       </div>
 
       {/* History Timeline */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <History className="h-5 w-5" />
-            Grading History
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">History timeline will appear here</p>
-        </CardContent>
-      </Card>
+      {grade && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Grading History
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {gradeHistory.length > 0 ? (
+              <div className="space-y-4">
+                {gradeHistory.map((entry: any, idx: number) => {
+                  const changedBy = entry.changed_by_profile;
+                  const changedByName = changedBy?.full_name || changedBy?.email || "Unknown";
+                  
+                  return (
+                    <div key={entry.id} className="flex gap-4 pb-4 border-b last:border-0">
+                      <div className="flex-shrink-0 w-2 h-2 rounded-full bg-primary mt-2" />
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-sm">{entry.action.replace("_", " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(entry.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        {entry.previous_score !== null && entry.new_score !== null && (
+                          <div className="text-sm text-muted-foreground">
+                            Score: {entry.previous_score} → {entry.new_score}
+                          </div>
+                        )}
+                        {entry.notes && (
+                          <p className="text-sm text-muted-foreground">{entry.notes}</p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Changed by: {changedByName}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm">No history available yet</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
