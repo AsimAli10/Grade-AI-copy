@@ -30,6 +30,7 @@ export function getAuthorizationUrl(userId: string): string {
   const scopes = [
     'https://www.googleapis.com/auth/classroom.courses.readonly',
     'https://www.googleapis.com/auth/classroom.coursework.me.readonly',
+    'https://www.googleapis.com/auth/classroom.coursework.me', // For creating assignments
     'https://www.googleapis.com/auth/classroom.coursework.students.readonly',
     'https://www.googleapis.com/auth/classroom.coursework.students', // For returning grades to students
     'https://www.googleapis.com/auth/classroom.rosters.readonly',

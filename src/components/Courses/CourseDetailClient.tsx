@@ -11,6 +11,8 @@ import { BookOpen, Users, BarChart3, MessageSquare, Plus, TrendingUp, FileText, 
 import Link from "next/link";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { AssignmentCreator } from "@/components/Assignments/AssignmentCreator";
+import { ForumPostDialog } from "@/components/Forums/ForumPostDialog";
 
 type CourseDetailClientProps = {
   courseId: string;
@@ -25,6 +27,9 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
   const [analytics, setAnalytics] = useState<any>(null);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isAssignmentDialogOpen, setIsAssignmentDialogOpen] = useState(false);
+  const [isPostDialogOpen, setIsPostDialogOpen] = useState(false);
+  const [courseForumId, setCourseForumId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCourseData();
@@ -318,7 +323,9 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
         .maybeSingle();
 
       if (courseForum) {
-        // Fetch forum messages that are Google Classroom announcements
+        setCourseForumId((courseForum as any).id);
+        // Fetch all forum messages (both Google Classroom announcements and regular posts)
+        // Only top-level messages (not replies)
         const { data: announcementsData, error: announcementsError } = await supabase
           .from("forum_messages")
           .select(`
@@ -330,8 +337,8 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
             )
           `)
           .eq("forum_id", (courseForum as any).id)
-          .not("google_classroom_announcement_id", "is", null)
-          .order("google_classroom_update_time", { ascending: false });
+          .is("parent_message_id", null) // Only top-level messages
+          .order("created_at", { ascending: false });
 
         if (announcementsError) {
           console.error("Error fetching announcements:", announcementsError);
@@ -339,6 +346,7 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
           setAnnouncements(announcementsData || []);
         }
       } else {
+        setCourseForumId(null);
         setAnnouncements([]);
       }
     } catch (error) {
@@ -426,7 +434,7 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
                   <CardTitle className="text-xl">Assignments</CardTitle>
                   <CardDescription className="text-base">View and manage course assignments</CardDescription>
                 </div>
-                <Button>
+                <Button onClick={() => setIsAssignmentDialogOpen(true)}>
                   <Plus className="h-4 w-4 mr-2" />
                   Create Assignment
                 </Button>
@@ -595,7 +603,10 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
                   <CardTitle className="text-xl">Announcements</CardTitle>
                   <CardDescription className="text-base">Google Classroom announcements and course updates</CardDescription>
                 </div>
-                <Button>
+                <Button 
+                  onClick={() => setIsPostDialogOpen(true)}
+                  disabled={!courseForumId}
+                >
                   <Plus className="h-4 w-4 mr-2" />
                   New Post
                 </Button>
@@ -663,6 +674,22 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AssignmentCreator
+        open={isAssignmentDialogOpen}
+        onOpenChange={setIsAssignmentDialogOpen}
+        courseId={courseId}
+        onSuccess={fetchCourseData}
+      />
+
+      {courseForumId && (
+        <ForumPostDialog
+          open={isPostDialogOpen}
+          onOpenChange={setIsPostDialogOpen}
+          forumId={courseForumId}
+          onSuccess={fetchCourseData}
+        />
+      )}
     </div>
   );
 }

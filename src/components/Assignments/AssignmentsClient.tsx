@@ -9,12 +9,14 @@ import { FileText, Plus } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { AssignmentCreator } from "./AssignmentCreator";
 
 export default function AssignmentsClient() {
   const router = useRouter();
   const { toast } = useToast();
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   useEffect(() => {
     fetchAssignments();
@@ -157,7 +159,7 @@ export default function AssignmentsClient() {
           <h1 className="text-4xl font-bold tracking-tight mb-2">Assignments</h1>
           <p className="text-muted-foreground text-lg">Manage all assignments across courses</p>
         </div>
-        <Button size="lg">
+        <Button size="lg" onClick={() => setIsDialogOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
           Create Assignment
         </Button>
@@ -173,7 +175,7 @@ export default function AssignmentsClient() {
             <p className="text-muted-foreground text-center mb-6 text-base">
               Create your first assignment to get started
             </p>
-            <Button size="lg">Create Assignment</Button>
+            <Button size="lg" onClick={() => setIsDialogOpen(true)}>Create Assignment</Button>
           </CardContent>
         </Card>
       ) : (
@@ -210,6 +212,12 @@ export default function AssignmentsClient() {
           ))}
         </div>
       )}
+
+      <AssignmentCreator
+        open={isDialogOpen}
+        onOpenChange={setIsDialogOpen}
+        onSuccess={fetchAssignments}
+      />
     </div>
   );
 }
