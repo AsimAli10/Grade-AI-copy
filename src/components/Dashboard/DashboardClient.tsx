@@ -280,6 +280,8 @@ export function DashboardClient({
       });
 
       setGoogleConnected(false);
+      setActiveCourses([]);
+      setRecentSubmissions([]);
       router.refresh();
     } catch (error: any) {
       toast({
