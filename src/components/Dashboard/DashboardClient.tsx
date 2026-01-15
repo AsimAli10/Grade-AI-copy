@@ -325,7 +325,7 @@ export function DashboardClient({
                 size="sm"
               >
                 <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-                {syncing ? "Syncing..." : "Sync Courses"}
+                {syncing ? "Syncing..." : "Sync from GCR"}
               </Button>
               <Button
                 onClick={handleDisconnectGoogle}
@@ -375,7 +375,7 @@ export function DashboardClient({
                   ) : googleConnected ? (
                     <>
                       <RefreshCw className="h-4 w-4 mr-2" />
-                      Sync Courses
+                      Sync from GCR
                     </>
                   ) : (
                     <>

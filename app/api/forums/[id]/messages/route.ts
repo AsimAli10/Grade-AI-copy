@@ -47,7 +47,8 @@ export async function POST(
         organization_id,
         courses:course_id (
           id,
-          teacher_id
+          teacher_id,
+          google_classroom_course_id
         )
       `)
       .eq("id", forumId)
@@ -127,6 +128,72 @@ export async function POST(
     }
 
     // Create the message
+    let googleClassroomAnnouncementId: string | null = null;
+
+    // If this is a top-level message (not a reply) and the forum is linked to a Google Classroom course,
+    // post it as an announcement to Google Classroom
+    if (!parent_message_id && forum.course_id) {
+      const course = (forum as any).courses;
+      if (course && course.google_classroom_course_id && course.teacher_id === session.user.id) {
+        // Only teachers can post announcements to Google Classroom
+        try {
+          // Get Google Classroom integration for the teacher
+          const { data: integration, error: intError } = await (supabase
+            .from("google_classroom_integrations") as any)
+            .select("*")
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+
+          if (!intError && integration) {
+            // Check if token is expired and refresh if needed
+            let accessToken = integration.access_token;
+            const tokenExpiresAt = new Date(integration.token_expires_at);
+            const now = new Date();
+
+            if (tokenExpiresAt <= now) {
+              const { refreshAccessToken, getAuthenticatedClient, getClassroomClient } = await import("@/utils/google-classroom");
+              const refreshed = await refreshAccessToken(integration.refresh_token);
+              accessToken = refreshed.access_token;
+
+              // Update stored token
+              await (supabase
+                .from("google_classroom_integrations") as any)
+                .update({
+                  access_token: refreshed.access_token,
+                  token_expires_at: new Date(refreshed.expiry_date).toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("user_id", session.user.id);
+            }
+
+            // Create announcement in Google Classroom
+            const { getAuthenticatedClient, getClassroomClient } = await import("@/utils/google-classroom");
+            const oauth2Client = getAuthenticatedClient(
+              accessToken,
+              integration.refresh_token
+            );
+            const classroom = getClassroomClient(oauth2Client);
+
+            const announcementResponse = await classroom.courses.announcements.create({
+              courseId: course.google_classroom_course_id,
+              requestBody: {
+                text: content.trim(),
+                state: 'PUBLISHED',
+              },
+            });
+
+            if (announcementResponse.data && announcementResponse.data.id) {
+              googleClassroomAnnouncementId = announcementResponse.data.id;
+            }
+          }
+        } catch (gcError: any) {
+          // Log error but don't fail the message creation
+          console.error("Error posting to Google Classroom:", gcError);
+          // Continue with message creation even if GC post fails
+        }
+      }
+    }
+
     const { data: message, error: insertError } = await (supabase
       .from("forum_messages") as any)
       .insert({
@@ -136,6 +203,7 @@ export async function POST(
         parent_message_id: parent_message_id || null,
         is_pinned: false,
         pinned_rubric_id: null,
+        google_classroom_announcement_id: googleClassroomAnnouncementId,
       })
       .select(`
         *,
@@ -158,6 +226,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message,
+      postedToGoogleClassroom: !!googleClassroomAnnouncementId,
     });
   } catch (error: any) {
     console.error("Error in POST /api/forums/[id]/messages:", error);
