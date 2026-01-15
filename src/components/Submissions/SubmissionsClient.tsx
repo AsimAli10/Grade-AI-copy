@@ -86,7 +86,7 @@ export default function SubmissionsClient() {
       const [studentsData, assignmentsData, gradesData] = await Promise.all([
         supabase.from("profiles").select("id, full_name, email").in("id", allStudentIds),
         supabase.from("assignments").select("id, title, course_id, max_points").in("id", allAssignmentIds),
-        supabase.from("grades").select("id, submission_id, score, max_score").in("submission_id", (submissionsData || []).map((s: any) => s.id)),
+        supabase.from("grades").select("id, submission_id, overall_score, max_score, grade_status").in("submission_id", (submissionsData || []).map((s: any) => s.id)),
       ]);
 
       // Get courses for assignments
@@ -119,9 +119,19 @@ export default function SubmissionsClient() {
         const student = studentsMap.get(sub.student_id) || {};
         const grade = gradesMap.get(sub.id);
         
-        const needsReview = sub.status === "submitted" || sub.status === "needs_review";
+        // A submission needs review if:
+        // 1. There's no grade, OR
+        // 2. The grade status is not teacher_reviewed/accepted/modified AND submission is submitted/needs_review
+        const hasReviewedGrade = grade && grade.grade_status && (
+          grade.grade_status === "teacher_reviewed" || 
+          grade.grade_status === "accepted" ||
+          grade.grade_status === "modified"
+        );
+        // If there's a reviewed grade, it never needs review
+        // Otherwise, check if submission status indicates it needs review
+        const needsReview = !hasReviewedGrade && (sub.status === "submitted" || sub.status === "needs_review");
         const gradeDisplay = grade 
-          ? `${grade.score}/${grade.max_score || assignment.max_points || 100}`
+          ? `${grade.overall_score}/${grade.max_score || assignment.max_points || 100}`
           : null;
 
         return {
