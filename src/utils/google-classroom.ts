@@ -31,6 +31,7 @@ export function getAuthorizationUrl(userId: string): string {
     'https://www.googleapis.com/auth/classroom.courses.readonly',
     'https://www.googleapis.com/auth/classroom.coursework.me.readonly',
     'https://www.googleapis.com/auth/classroom.coursework.students.readonly',
+    'https://www.googleapis.com/auth/classroom.coursework.students', // For returning grades to students
     'https://www.googleapis.com/auth/classroom.rosters.readonly',
     'https://www.googleapis.com/auth/classroom.announcements.readonly', // For fetching announcements
     'https://www.googleapis.com/auth/classroom.profile.emails',
@@ -319,6 +320,76 @@ export async function fetchAnnouncements(
   });
 
   return announcements;
+}
+
+/**
+ * Return a grade to a student submission in Google Classroom
+ * This updates the submission with the grade and marks it as returned
+ */
+export async function returnGradeToGoogleClassroom(
+  oauth2Client: OAuth2Client,
+  courseId: string,
+  courseWorkId: string,
+  submissionId: string,
+  grade: {
+    assignedGrade?: number;
+    draftGrade?: number;
+    maxPoints?: number;
+  }
+) {
+  const classroom = getClassroomClient(oauth2Client);
+  
+  // First, get the current submission to check its state
+  const currentSubmission = await classroom.courses.courseWork.studentSubmissions.get({
+    courseId,
+    courseWorkId,
+    id: submissionId,
+  });
+
+  if (!currentSubmission.data) {
+    throw new Error('Submission not found in Google Classroom');
+  }
+
+  // Prepare the update payload
+  const updatePayload: any = {
+    courseId,
+    courseWorkId,
+    id: submissionId,
+  };
+
+  // If we have an assigned grade, set it
+  if (grade.assignedGrade !== undefined) {
+    updatePayload.assignedGrade = grade.assignedGrade;
+  }
+
+  // If we have a draft grade, set it
+  if (grade.draftGrade !== undefined) {
+    updatePayload.draftGrade = grade.draftGrade;
+  }
+
+  // Patch the submission with the grade
+  const response = await classroom.courses.courseWork.studentSubmissions.patch({
+    courseId,
+    courseWorkId,
+    id: submissionId,
+    updateMask: 'assignedGrade,draftGrade',
+    requestBody: {
+      assignedGrade: grade.assignedGrade,
+      draftGrade: grade.draftGrade,
+    },
+  });
+
+  // If the submission is in TURNED_IN state and we have a grade, return it
+  if (currentSubmission.data.state === 'TURNED_IN' && grade.assignedGrade !== undefined) {
+    await classroom.courses.courseWork.studentSubmissions.return({
+      courseId,
+      courseWorkId,
+      id: submissionId,
+      requestBody: {},
+    });
+  }
+
+  return response.data;
 }
 
 

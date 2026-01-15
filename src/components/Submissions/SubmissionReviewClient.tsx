@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle2, Edit, MessageSquare, Flag, History, ExternalLink, FileText, Save, X, AlertTriangle } from "lucide-react";
+import { CheckCircle2, Edit, MessageSquare, Flag, History, ExternalLink, FileText, Save, X, AlertTriangle, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -32,6 +32,7 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
   const [saving, setSaving] = useState(false);
   const [teacherNotes, setTeacherNotes] = useState("");
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [syncingToGCR, setSyncingToGCR] = useState(false);
 
   const fetchSubmissionData = useCallback(async () => {
     try {
@@ -71,9 +72,12 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
             description,
             max_points,
             rubric_id,
+            google_classroom_assignment_id,
+            course_id,
             courses:course_id (
               id,
-              name
+              name,
+              google_classroom_course_id
             ),
             rubrics:rubric_id (
               id,
@@ -100,6 +104,10 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
       setSubmission(submissionData);
       const assignmentData = (submissionData as any).assignments;
       setAssignment(assignmentData);
+      
+      // Debug: Log Google Classroom IDs for troubleshooting
+      console.log("Submission GCR ID:", (submissionData as any).google_classroom_submission_id);
+      console.log("Assignment GCR ID:", assignmentData?.google_classroom_assignment_id);
       
       // Set rubric if assignment has one
       if (assignmentData?.rubrics) {
@@ -335,6 +343,47 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSyncToGoogleClassroom = async () => {
+    if (!grade || !assignment || !submission) return;
+
+    setSyncingToGCR(true);
+    try {
+      const courseId = assignment.courses?.id || assignment.course_id;
+      
+      const response = await fetch("/api/google-classroom/sync-back", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          submissionId: submission.id,
+          assignmentId: assignment.id,
+          courseId: courseId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to sync grade to Google Classroom");
+      }
+
+      toast({
+        title: "Success",
+        description: "Grade synced to Google Classroom successfully",
+      });
+    } catch (error: any) {
+      console.error("Error syncing to Google Classroom:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to sync grade to Google Classroom",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncingToGCR(false);
     }
   };
 
@@ -852,6 +901,41 @@ export default function SubmissionReviewClient({ submissionId }: SubmissionRevie
                         {grade.flagged_for_review ? "Unflag" : "Flag for Review"}
                       </Button>
                     )}
+                    {/* Sync to Google Classroom button - only show if assignment is linked to GCR */}
+                    {(() => {
+                      const hasGCRAssignment = !!assignment?.google_classroom_assignment_id;
+                      const hasGCRSubmission = !!submission?.google_classroom_submission_id;
+                      const shouldShow = hasGCRAssignment && hasGCRSubmission;
+                      
+                      // Debug logging
+                      if (grade && (userRole === "teacher" || userRole === "admin")) {
+                        console.log("Sync button check:", {
+                          hasGCRAssignment,
+                          hasGCRSubmission,
+                          shouldShow,
+                          assignmentId: assignment?.id,
+                          submissionId: submission?.id,
+                          gcrAssignmentId: assignment?.google_classroom_assignment_id,
+                          gcrSubmissionId: submission?.google_classroom_submission_id,
+                        });
+                      }
+                      
+                      if (!shouldShow) {
+                        return null;
+                      }
+                      
+                      return (
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          onClick={handleSyncToGoogleClassroom}
+                          disabled={syncingToGCR}
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          {syncingToGCR ? "Syncing..." : "Sync to Google Classroom"}
+                        </Button>
+                      );
+                    })()}
                   </>
                 ) : (
                   <div className="space-y-3">
