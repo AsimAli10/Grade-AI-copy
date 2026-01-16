@@ -424,10 +424,12 @@ Deno.serve(async (req: Request) => {
         };
 
         let courseId: string;
+        let isNewCourse = false;
         if (existingCourse) {
           courseId = (existingCourse as any).id;
           await (adminClient.from('courses') as any).update(courseData).eq('id', courseId);
         } else {
+          isNewCourse = true;
           const { data: newCourse, error: courseError } = await (adminClient.from('courses') as any).insert({
             ...courseData,
             student_count: 0,
@@ -440,7 +442,10 @@ Deno.serve(async (req: Request) => {
           courseId = (newCourse as any).id;
         }
 
-        syncedCount++;
+        // Only count if it's a new course
+        if (isNewCourse) {
+          syncedCount++;
+        }
 
         // Fetch and sync students
         try {
@@ -503,6 +508,13 @@ Deno.serve(async (req: Request) => {
               studentId = authUserId;
             }
 
+            // Check if enrollment already exists
+            const { data: existingEnrollment } = await (adminClient.from('course_enrollments') as any)
+              .select('id')
+              .eq('course_id', courseId)
+              .eq('student_id', studentId)
+              .maybeSingle();
+
             // Create or update enrollment
             await (adminClient.from('course_enrollments') as any).upsert(
               {
@@ -516,7 +528,10 @@ Deno.serve(async (req: Request) => {
               }
             );
 
-            courseStudentsSynced++;
+            // Only count if it's a new enrollment
+            if (!existingEnrollment) {
+              courseStudentsSynced++;
+            }
           }
           
           studentsSynced += courseStudentsSynced;
@@ -695,6 +710,7 @@ Deno.serve(async (req: Request) => {
               .maybeSingle();
 
             let assignmentId: string;
+            let isNewAssignment = false;
             if (existingAssignment) {
               assignmentId = existingAssignment.id;
               await (adminClient.from('assignments') as any).update({
@@ -711,6 +727,7 @@ Deno.serve(async (req: Request) => {
                 updated_at: new Date().toISOString(),
               }).eq('id', assignmentId);
             } else {
+              isNewAssignment = true;
               const { data: newAssignment, error: assignmentError } = await (adminClient.from('assignments') as any).insert({
                 course_id: courseId,
                 google_classroom_assignment_id: fullWork.id,
@@ -879,6 +896,13 @@ Deno.serve(async (req: Request) => {
                     status = 'returned';
                   }
 
+                  // Check if submission already exists
+                  const { data: existingSubmission } = await (adminClient.from('submissions') as any)
+                    .select('id')
+                    .eq('assignment_id', assignmentId)
+                    .eq('student_id', studentProfile.id)
+                    .maybeSingle();
+
                   // Upsert submission
                   await (adminClient.from('submissions') as any).upsert(
                     {
@@ -898,7 +922,10 @@ Deno.serve(async (req: Request) => {
                     }
                   );
 
-                  assignmentSubmissionsSynced++;
+                  // Only count if it's a new submission
+                  if (!existingSubmission) {
+                    assignmentSubmissionsSynced++;
+                  }
                 }
                 
                 submissionsSynced += assignmentSubmissionsSynced;
@@ -907,7 +934,10 @@ Deno.serve(async (req: Request) => {
               }
             }
             
-            courseAssignmentsSynced++;
+            // Only count if it's a new assignment
+            if (isNewAssignment) {
+              courseAssignmentsSynced++;
+            }
           }
           
           assignmentsSynced += courseAssignmentsSynced;
@@ -983,7 +1013,6 @@ Deno.serve(async (req: Request) => {
                               type: 'multiple_choice',
                               question: questionText,
                               options: choiceQ.options?.map((opt: any) => opt.value || '') || [],
-                              correct_answer: choiceQ.options?.find((opt: any) => opt.isCorrect)?.value,
                               points: 1,
                             });
                           } else if (questionItem.question?.textQuestion) {
@@ -1008,15 +1037,10 @@ Deno.serve(async (req: Request) => {
               
               if (quizWork.workType === 'MULTIPLE_CHOICE_QUESTION') {
                 let options: string[] = [];
-                let correctAnswer: string | undefined;
                 
                 if (quizWork.multipleChoiceQuestion) {
                   const mcq = quizWork.multipleChoiceQuestion;
                   options = mcq.choices || [];
-                  
-                  if (mcq.correctChoiceIndex !== undefined && mcq.choices && mcq.choices[mcq.correctChoiceIndex]) {
-                    correctAnswer = mcq.choices[mcq.correctChoiceIndex];
-                  }
                 }
                 
                 questions.push({
@@ -1024,7 +1048,6 @@ Deno.serve(async (req: Request) => {
                   type: 'multiple_choice',
                   question: questionText,
                   options: options,
-                  correct_answer: correctAnswer,
                   points: quizWork.maxPoints?.value || 1,
                 });
               } else if (quizWork.workType === 'SHORT_ANSWER_QUESTION') {
@@ -1048,6 +1071,7 @@ Deno.serve(async (req: Request) => {
               .maybeSingle();
 
             let quizId: string;
+            let isNewQuiz = false;
             if (existingQuiz) {
               quizId = existingQuiz.id;
               await (adminClient.from('quizzes') as any)
@@ -1059,6 +1083,7 @@ Deno.serve(async (req: Request) => {
                 })
                 .eq('id', quizId);
             } else {
+              isNewQuiz = true;
               const { data: newQuiz, error: quizError } = await (adminClient.from('quizzes') as any)
                 .insert({
                   course_id: courseId,
@@ -1080,7 +1105,149 @@ Deno.serve(async (req: Request) => {
               quizId = (newQuiz as any).id;
             }
 
-            courseQuizzesSynced++;
+            // Only count if it's a new quiz
+            if (isNewQuiz) {
+              courseQuizzesSynced++;
+            }
+
+            // Sync quiz submissions for question items
+            try {
+              let allQuizSubmissions: any[] = [];
+              let quizSubmissionPageToken: string | undefined;
+              
+              do {
+                const quizSubmissionsResponse = await callGoogleClassroomAPI(
+                  accessToken,
+                  'GET',
+                  `courses/${gcCourse.id}/courseWork/${quizWork.id}/studentSubmissions?pageSize=100${quizSubmissionPageToken ? `&pageToken=${quizSubmissionPageToken}` : ''}`
+                );
+                
+                if (quizSubmissionsResponse.studentSubmissions) {
+                  allQuizSubmissions.push(...quizSubmissionsResponse.studentSubmissions);
+                }
+                quizSubmissionPageToken = quizSubmissionsResponse.nextPageToken;
+              } while (quizSubmissionPageToken);
+
+              let quizSubmissionsSynced = 0;
+              for (const googleSubmission of allQuizSubmissions) {
+                if (!googleSubmission.id || !googleSubmission.userId) continue;
+                
+                const isTurnedIn = googleSubmission.state === 'TURNED_IN' || googleSubmission.state === 'RETURNED';
+                
+                if (!isTurnedIn) {
+                  continue;
+                }
+
+                // Check if this quiz submission already exists to prevent duplicates
+                // Use google_classroom_submission_id to check for existing attempts
+                if (googleSubmission.id) {
+                  const { data: existingAttempt } = await (adminClient.from('quiz_attempts') as any)
+                    .select('id')
+                    .eq('google_classroom_submission_id', googleSubmission.id)
+                    .maybeSingle();
+
+                  if (existingAttempt) {
+                    // Already synced, skip to prevent duplicate
+                    continue;
+                  }
+                }
+
+                // Find student by Google Classroom ID
+                let { data: studentProfile } = await adminClient
+                  .from('profiles')
+                  .select('id')
+                  .eq('google_classroom_id', googleSubmission.userId)
+                  .maybeSingle();
+
+                if (!studentProfile) {
+                  // Try to get student info from Google Classroom
+                  try {
+                    const studentInfo = await callGoogleClassroomAPI(
+                      accessToken,
+                      'GET',
+                      `userProfiles/${googleSubmission.userId}`
+                    );
+
+                    if (studentInfo) {
+                      const studentEmail = studentInfo.emailAddress || `student_${googleSubmission.userId}@classroom.local`;
+                      
+                      const authUserId = await findOrCreateStudentAuthUser(
+                        adminClient,
+                        studentEmail,
+                        googleSubmission.userId,
+                        user.id
+                      );
+                      
+                      if (!authUserId) {
+                        continue;
+                      }
+
+                      const fullName = `${studentInfo.name?.givenName || ''} ${studentInfo.name?.familyName || ''}`.trim() || 'Student';
+                      await adminClient
+                        .from('profiles')
+                        .update({
+                          full_name: fullName,
+                          google_classroom_id: googleSubmission.userId,
+                          google_email: studentInfo.emailAddress || null,
+                        })
+                        .eq('id', authUserId);
+
+                      studentProfile = { id: authUserId };
+                    } else {
+                      continue;
+                    }
+                  } catch (profileError) {
+                    continue;
+                  }
+                }
+
+                // Extract answer from quiz submission
+                const answers: Record<string, any> = {};
+                const questionId = questions[0]?.id || `q_${quizWork.id}`;
+                
+                if (googleSubmission.shortAnswerSubmission?.answer) {
+                  answers[questionId] = googleSubmission.shortAnswerSubmission.answer;
+                } else if (googleSubmission.multipleChoiceSubmission?.answer) {
+                  answers[questionId] = googleSubmission.multipleChoiceSubmission.answer;
+                } else {
+                  // Fallback: store submission ID for reference
+                  answers[questionId] = null;
+                }
+
+                // Calculate max score
+                const maxScore = Array.isArray(questions)
+                  ? questions.reduce((sum: number, q: any) => sum + (parseInt(q.points) || 1), 0)
+                  : 100;
+
+                // Create quiz_attempt - the pre-check above prevents duplicates
+                // Use the unique constraint (quiz_id, student_id, started_at) for conflict resolution
+                const submittedAt = googleSubmission.submissionHistory?.[0]?.stateHistory?.[0]?.stateTimestamp
+                  ? new Date(googleSubmission.submissionHistory[0].stateHistory[0].stateTimestamp).toISOString()
+                  : new Date().toISOString();
+                
+                await (adminClient.from('quiz_attempts') as any).upsert(
+                  {
+                    quiz_id: quizId,
+                    student_id: studentProfile.id,
+                    answers: answers,
+                    max_score: maxScore,
+                    submitted_at: submittedAt,
+                    started_at: submittedAt, // Use submitted_at as started_at for conflict resolution
+                    google_classroom_submission_id: googleSubmission.id,
+                  },
+                  {
+                    onConflict: 'quiz_id,student_id,started_at',
+                  }
+                );
+
+                quizSubmissionsSynced++;
+              }
+              
+              // Add quiz submissions to total submissions count
+              submissionsSynced += quizSubmissionsSynced;
+            } catch (quizSubmissionError) {
+              // Continue even if quiz submission sync fails
+            }
           }
 
           if (courseQuizzesSynced > 0) {
@@ -1176,6 +1343,12 @@ Deno.serve(async (req: Request) => {
                   .eq('id', authorId);
               }
 
+              // Check if announcement already exists
+              const { data: existingAnnouncement } = await (adminClient.from('forum_messages') as any)
+                .select('id')
+                .eq('google_classroom_announcement_id', announcement.id)
+                .maybeSingle();
+
               // Upsert announcement as forum message
               await (adminClient.from('forum_messages') as any).upsert(
                 {
@@ -1205,7 +1378,10 @@ Deno.serve(async (req: Request) => {
                 }
               );
 
-              courseAnnouncementsSynced++;
+              // Only count if it's a new announcement
+              if (!existingAnnouncement) {
+                courseAnnouncementsSynced++;
+              }
             }
             
             announcementsSynced += courseAnnouncementsSynced;

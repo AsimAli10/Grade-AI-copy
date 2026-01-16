@@ -7,12 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BookOpen, Users, BarChart3, MessageSquare, Plus, TrendingUp, FileText, Clock, Pin } from "lucide-react";
+import { BookOpen, Users, BarChart3, MessageSquare, Plus, TrendingUp, FileText, Clock, Pin, FileQuestion } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { AssignmentCreator } from "@/components/Assignments/AssignmentCreator";
 import { ForumPostDialog } from "@/components/Forums/ForumPostDialog";
+import { QuizCreator } from "@/components/Quizzes/QuizCreator";
 
 type CourseDetailClientProps = {
   courseId: string;
@@ -23,11 +24,13 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
   const { toast } = useToast();
   const [course, setCourse] = useState<any>(null);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [quizzes, setQuizzes] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAssignmentDialogOpen, setIsAssignmentDialogOpen] = useState(false);
+  const [isQuizDialogOpen, setIsQuizDialogOpen] = useState(false);
   const [isPostDialogOpen, setIsPostDialogOpen] = useState(false);
   const [courseForumId, setCourseForumId] = useState<string | null>(null);
 
@@ -76,6 +79,29 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
         .select("id, title, description, max_points, due_date, assignment_type, sync_status")
         .eq("course_id", courseId)
         .order("due_date", { ascending: true });
+
+      // Fetch quizzes for this course
+      const { data: quizzesData, error: quizzesError } = await supabase
+        .from("quizzes")
+        .select("id, title, description, questions, time_limit_minutes, is_published, created_at, google_classroom_quiz_id")
+        .eq("course_id", courseId)
+        .order("created_at", { ascending: false });
+
+      if (!quizzesError && quizzesData) {
+        const processedQuizzes = quizzesData.map((quiz: any) => ({
+          id: quiz.id,
+          title: quiz.title,
+          description: quiz.description,
+          questionsCount: Array.isArray(quiz.questions) ? quiz.questions.length : 0,
+          timeLimit: quiz.time_limit_minutes,
+          isPublished: quiz.is_published,
+          createdAt: quiz.created_at,
+          hasGCR: !!quiz.google_classroom_quiz_id,
+        }));
+        setQuizzes(processedQuizzes);
+      } else if (quizzesError) {
+        console.error("Error fetching quizzes:", quizzesError);
+      }
 
       let processedAssignments: any[] = [];
       if (!assignmentsError && assignmentsData) {
@@ -421,6 +447,7 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
       <Tabs defaultValue="assignments" className="w-full">
         <TabsList>
           <TabsTrigger value="assignments">Assignments</TabsTrigger>
+          <TabsTrigger value="quizzes">Quizzes</TabsTrigger>
           <TabsTrigger value="students">Students</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="forum">Forum</TabsTrigger>
@@ -475,6 +502,67 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
                   </div>
                 ))}
               </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="quizzes" className="mt-6">
+          <Card className="shadow-sm border-border/50">
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-xl">Quizzes</CardTitle>
+                  <CardDescription className="text-base">View and manage course quizzes</CardDescription>
+                </div>
+                <Button onClick={() => setIsQuizDialogOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Quiz
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {quizzes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <FileQuestion className="h-12 w-12 text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground text-center">No quizzes yet</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {quizzes.map((quiz) => (
+                    <div key={quiz.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="font-semibold text-base">{quiz.title}</h3>
+                          <Badge variant={quiz.isPublished ? "default" : "secondary"}>
+                            {quiz.isPublished ? "Published" : "Draft"}
+                          </Badge>
+                          {quiz.hasGCR && (
+                            <Badge variant="outline">Google Classroom</Badge>
+                          )}
+                        </div>
+                        {quiz.description && (
+                          <p className="text-sm text-muted-foreground mb-2">{quiz.description}</p>
+                        )}
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <span>{quiz.questionsCount} questions</span>
+                          {quiz.timeLimit && (
+                            <>
+                              <span>•</span>
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                {quiz.timeLimit} minutes
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <Button variant="outline" asChild className="ml-4">
+                        <Link href={`/quizzes/${quiz.id}`}>View</Link>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>
@@ -678,6 +766,13 @@ export default function CourseDetailClient({ courseId }: CourseDetailClientProps
       <AssignmentCreator
         open={isAssignmentDialogOpen}
         onOpenChange={setIsAssignmentDialogOpen}
+        courseId={courseId}
+        onSuccess={fetchCourseData}
+      />
+
+      <QuizCreator
+        open={isQuizDialogOpen}
+        onOpenChange={setIsQuizDialogOpen}
         courseId={courseId}
         onSuccess={fetchCourseData}
       />

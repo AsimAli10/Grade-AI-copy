@@ -116,6 +116,10 @@ export async function POST(request: NextRequest) {
       title,
       course_id,
       description,
+      questions,
+      time_limit_minutes,
+      post_to_google_classroom,
+      // Legacy fields for backward compatibility
       topic,
       difficulty,
       questionCount,
@@ -134,7 +138,7 @@ export async function POST(request: NextRequest) {
     // Verify course belongs to teacher
     const { data: course } = await (supabase
       .from("courses") as any)
-      .select("id")
+      .select("id, teacher_id, google_classroom_course_id")
       .eq("id", course_id)
       .eq("teacher_id", session.user.id)
       .maybeSingle();
@@ -146,21 +150,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // For now, if useAI is true, we'll create a placeholder quiz
-    // The AI generation will be implemented later
-    const questions = useAI
-      ? [] // Will be populated by AI generation later
-      : []; // Manual quiz creation - questions will be added later
+    // Use provided questions or empty array (for legacy AI flow)
+    const quizQuestions = questions || [];
+
+    // Calculate total points from questions
+    const totalPoints = quizQuestions.reduce(
+      (sum: number, q: any) => sum + (parseInt(q.points) || 1),
+      0
+    );
 
     const { data: quiz, error: insertError } = await (supabase
       .from("quizzes") as any)
       .insert({
         course_id,
         created_by: session.user.id,
-        title,
-        description: description || `Quiz on ${topic || "course content"}`,
-        questions: questions,
-        time_limit_minutes: timeLimit ? parseInt(timeLimit) : null,
+        title: title.trim(),
+        description: description?.trim() || null,
+        questions: quizQuestions,
+        time_limit_minutes: time_limit_minutes
+          ? parseInt(time_limit_minutes)
+          : timeLimit
+          ? parseInt(timeLimit)
+          : null,
         max_attempts: 1,
         is_published: false,
       })
@@ -175,16 +186,148 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let googleClassroomQuizId: string | null = null;
+
+    // If course is linked to Google Classroom and user wants to post it
+    if (post_to_google_classroom && course.google_classroom_course_id) {
+      try {
+        // Get Google Classroom integration for the teacher
+        const { data: integration, error: intError } = await (supabase
+          .from("google_classroom_integrations") as any)
+          .select("*")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (!intError && integration) {
+          // Check if token is expired and refresh if needed
+          let accessToken = integration.access_token;
+          const tokenExpiresAt = new Date(integration.token_expires_at);
+          const now = new Date();
+
+          if (tokenExpiresAt <= now) {
+            const { refreshAccessToken } = await import("@/utils/google-classroom");
+            const refreshed = await refreshAccessToken(integration.refresh_token);
+            accessToken = refreshed.access_token;
+
+            // Update stored token
+            await (supabase
+              .from("google_classroom_integrations") as any)
+              .update({
+                access_token: refreshed.access_token,
+                token_expires_at: new Date(refreshed.expiry_date).toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+              .eq("user_id", session.user.id);
+          }
+
+          // Create quiz in Google Classroom as question item
+          // For single question quizzes, create as question item (MULTIPLE_CHOICE_QUESTION or SHORT_ANSWER_QUESTION)
+          // This makes it appear as a quiz question in Google Classroom instead of an assignment
+          const { getAuthenticatedClient, getClassroomClient } = await import("@/utils/google-classroom");
+          const oauth2Client = getAuthenticatedClient(
+            accessToken,
+            integration.refresh_token
+          );
+          const classroom = getClassroomClient(oauth2Client);
+
+          // Determine work type based on first question
+          const firstQuestion = quizQuestions.length > 0 ? quizQuestions[0] : null;
+          let workType = "ASSIGNMENT"; // Default fallback
+          let requestBody: any = {
+            title: title.trim(),
+            description: description || null,
+            maxPoints: totalPoints || 100,
+            state: "PUBLISHED",
+          };
+
+          if (firstQuestion) {
+            if (firstQuestion.type === "multiple_choice" || firstQuestion.type === "true_false") {
+              workType = "MULTIPLE_CHOICE_QUESTION";
+              requestBody = {
+                title: title.trim(),
+                description: description || null,
+                maxPoints: totalPoints || 100,
+                state: "PUBLISHED",
+                workType: "MULTIPLE_CHOICE_QUESTION",
+                multipleChoiceQuestion: {
+                  choices: firstQuestion.options || ["True", "False"],
+                },
+              };
+            } else if (firstQuestion.type === "short_answer") {
+              workType = "SHORT_ANSWER_QUESTION";
+              requestBody = {
+                title: title.trim(),
+                description: description || null,
+                maxPoints: totalPoints || 100,
+                state: "PUBLISHED",
+                workType: "SHORT_ANSWER_QUESTION",
+              };
+            } else {
+              // Fallback to assignment with description
+              const gcDescription = description
+                ? `${description}\n\nQuestions:\n${quizQuestions
+                    .map((q: any, idx: number) => `${idx + 1}. ${q.question}`)
+                    .join("\n")}`
+                : `Quiz: ${title}\n\nQuestions:\n${quizQuestions
+                    .map((q: any, idx: number) => `${idx + 1}. ${q.question}`)
+                    .join("\n")}`;
+              requestBody = {
+                title: title.trim(),
+                description: gcDescription,
+                workType: "ASSIGNMENT",
+                maxPoints: totalPoints || 100,
+                state: "PUBLISHED",
+              };
+            }
+          } else {
+            // No questions - create as assignment with description
+            requestBody = {
+              title: title.trim(),
+              description: description || `Quiz: ${title}`,
+              workType: "ASSIGNMENT",
+              maxPoints: totalPoints || 100,
+              state: "PUBLISHED",
+            };
+          }
+
+          const courseworkResponse = await classroom.courses.courseWork.create({
+            courseId: course.google_classroom_course_id,
+            requestBody: requestBody,
+          });
+
+          if (courseworkResponse.data && courseworkResponse.data.id) {
+            googleClassroomQuizId = courseworkResponse.data.id;
+
+            // Update quiz with Google Classroom ID and mark as published
+            // If it's posted to Google Classroom, it should be published in GradeAI too
+            await (supabase
+              .from("quizzes") as any)
+              .update({
+                google_classroom_quiz_id: googleClassroomQuizId,
+                is_published: true, // Mark as published when posted to Google Classroom
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", quiz.id);
+          }
+        }
+      } catch (gcError: any) {
+        // Log error but don't fail the quiz creation
+        console.error("Error posting to Google Classroom:", gcError);
+        // Quiz is still created in GradeAI, just not synced to GCR
+      }
+    }
+
     return NextResponse.json({
       success: true,
       quiz: {
         id: quiz.id,
         title: quiz.title,
-        useAI: useAI || false,
-        message: useAI
-          ? "Quiz created. AI generation will be implemented soon."
-          : "Quiz created successfully.",
+        google_classroom_quiz_id: googleClassroomQuizId,
       },
+      postedToGoogleClassroom: !!googleClassroomQuizId,
+      message: useAI
+        ? "Quiz created. AI generation will be implemented soon."
+        : "Quiz created successfully.",
     });
   } catch (error: any) {
     console.error("Error in POST /api/quizzes:", error);

@@ -239,9 +239,19 @@ export function DashboardClient({
         throw new Error(data.error || "Failed to sync courses");
       }
 
+      const stats = [];
+      if (data.synced) stats.push(`${data.synced} course${data.synced !== 1 ? "s" : ""}`);
+      if (data.assignmentsSynced) stats.push(`${data.assignmentsSynced} assignment${data.assignmentsSynced !== 1 ? "s" : ""}`);
+      if (data.quizzesSynced) stats.push(`${data.quizzesSynced} quiz${data.quizzesSynced !== 1 ? "zes" : ""}`);
+      if (data.submissionsSynced) stats.push(`${data.submissionsSynced} submission${data.submissionsSynced !== 1 ? "s" : ""}`);
+      if (data.studentsSynced) stats.push(`${data.studentsSynced} student${data.studentsSynced !== 1 ? "s" : ""}`);
+      if (data.announcementsSynced) stats.push(`${data.announcementsSynced} announcement${data.announcementsSynced !== 1 ? "s" : ""}`);
+
       toast({
         title: "Sync Complete",
-        description: `Synced ${data.synced} course${data.synced !== 1 ? "s" : ""} from Google Classroom`,
+        description: stats.length > 0 
+          ? `Synced: ${stats.join(", ")} from Google Classroom`
+          : `Synced ${data.synced || 0} course${data.synced !== 1 ? "s" : ""} from Google Classroom`,
       });
 
       // Refresh courses
