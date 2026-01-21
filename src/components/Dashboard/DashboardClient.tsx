@@ -239,7 +239,7 @@ export function DashboardClient({
         throw new Error(data.error || "Failed to sync courses");
       }
 
-      const stats = [];
+      const stats: string[] = [];
       if (data.synced) stats.push(`${data.synced} course${data.synced !== 1 ? "s" : ""}`);
       if (data.assignmentsSynced) stats.push(`${data.assignmentsSynced} assignment${data.assignmentsSynced !== 1 ? "s" : ""}`);
       if (data.quizzesSynced) stats.push(`${data.quizzesSynced} quiz${data.quizzesSynced !== 1 ? "zes" : ""}`);

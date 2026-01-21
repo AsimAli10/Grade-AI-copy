@@ -83,7 +83,7 @@ export default function CoursesClient() {
         throw new Error(data.error || "Failed to sync courses");
       }
 
-      const stats = [];
+      const stats: string[] = [];
       if (data.synced) stats.push(`${data.synced} course${data.synced !== 1 ? "s" : ""}`);
       if (data.studentsSynced) stats.push(`${data.studentsSynced} student${data.studentsSynced !== 1 ? "s" : ""}`);
       if (data.assignmentsSynced) stats.push(`${data.assignmentsSynced} assignment${data.assignmentsSynced !== 1 ? "s" : ""}`);

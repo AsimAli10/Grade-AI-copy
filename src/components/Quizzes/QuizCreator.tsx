@@ -106,7 +106,7 @@ export function QuizCreator({
       
       // Check Google Classroom link for selected course
       if (formData.course_id) {
-        const selectedCourse = coursesData?.find(c => c.id === formData.course_id);
+        const selectedCourse = (coursesData as any)?.find((c: any) => c.id === formData.course_id);
         setCanPostToGCR(!!selectedCourse?.google_classroom_course_id);
       }
     } catch (error) {
@@ -115,6 +115,11 @@ export function QuizCreator({
   };
 
   const checkGoogleClassroomLink = async () => {
+    if (!courseId) {
+      setCanPostToGCR(false);
+      return;
+    }
+    
     try {
       const { data: course } = await supabase
         .from("courses")
@@ -122,7 +127,7 @@ export function QuizCreator({
         .eq("id", courseId)
         .maybeSingle();
       
-      setCanPostToGCR(!!course?.google_classroom_course_id);
+      setCanPostToGCR(!!(course as any)?.google_classroom_course_id);
     } catch (error) {
       console.error("Error checking Google Classroom link:", error);
       setCanPostToGCR(false);
@@ -418,7 +423,7 @@ export function QuizCreator({
                         <div key={num}>
                           <Input
                             placeholder={`Option ${num}${num <= 2 ? " *" : ""}`}
-                            value={formData[optionKey]}
+                            value={(formData[optionKey] as string) || ""}
                             onChange={(e) =>
                               setFormData((prev) => ({
                                 ...prev,
